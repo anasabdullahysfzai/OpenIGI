@@ -80,6 +80,12 @@ public sealed partial class Igi1HumanAi
             player.Approached = player.Suspicion >= WalkOverSuspicion;
             _heardAt = glimpsed;
             _redirect = true;
+
+            // Going to where he lost him is a hunt; going towards a man he can still see is making him out.
+            _hunting = lostHim;
         }
     }
+
+    // Whether the investigation under way is a hunt for a man he lost sight of: he fills as an alerted soldier does.
+    private bool _hunting;
 }

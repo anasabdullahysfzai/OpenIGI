@@ -5,14 +5,15 @@ namespace OpenIGI.Game.Igi1.Ai;
 /// the original's sight test and the soldier believing it. <b>Not retail</b> (<see cref="GameplayCVars.ModernAi"/>).
 /// </summary>
 /// <remarks>
-/// Full is one. A soldier holding a human in plain view, near and dead ahead, fills in about half a second; at the far end of
-/// its cone, or at the cone's rim, crouched and still, it may take half a minute -- long enough to get out of the way.
+/// Full is one. A soldier holding a human in plain view, near and dead ahead, fills in under a second, and one standing still
+/// fourteen metres off in about three; at the far end of its cone, or at the cone's rim, crouched and still, it may take half a
+/// minute -- long enough to get out of the way. A soldier hunting for someone fills twice as fast.
 /// </remarks>
 public static class AiSuspicion
 {
     /// <summary>What full suspicion fills at, per second, in the best view: near, dead ahead, standing, walking.</summary>
     // ponytail: hand-tuned constants; move to a settings row per AI type once play-testing settles them.
-    public const double FillPerSecond = 2.0;
+    public const double FillPerSecond = 1.2;
 
     /// <summary>What a soldier's suspicion drains at, per second, once it cannot see the human.</summary>
     public const double DrainPerSecond = 0.25;
@@ -22,7 +23,7 @@ public static class AiSuspicion
 
     /// <summary>The least time anyone takes from nothing to sure, in seconds: the player always gets a moment to react.</summary>
     /// <remarks>Without it a soldier a footstep had alerted, close and facing the player, went from nothing to sure in one scan.</remarks>
-    public const double FastestSeconds = 0.4;
+    public const double FastestSeconds = 0.6;
 
     /// <summary>The least share of the fill a human anywhere in a cone gives, so the far end is slow, not never.</summary>
     public const double FloorViewStrength = 0.1;
@@ -55,7 +56,7 @@ public static class AiSuspicion
             return Math.Max(0.0, suspicion - (DrainPerSecond * seconds));
         }
 
-        double movement = metresPerSecond < StillBelowMetresPerSecond ? 0.5
+        double movement = metresPerSecond < StillBelowMetresPerSecond ? 0.6
             : metresPerSecond > RunningAboveMetresPerSecond ? 1.4
             : 1.0;
         double rate = FillPerSecond

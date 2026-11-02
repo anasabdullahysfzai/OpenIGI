@@ -56,6 +56,9 @@ public sealed class AiInvestigationTests : AiSoldierCombatWiringFixture
         Assert.False(soldier.SeesEnemy);
         Assert.True(Vector3d.Distance(soldier.InvestigatingAt!.Value, seen) < 2 * Metre, "he went where the player went, not where he saw him");
 
+        // Nearly sure, he jogs there; less, he walks.
+        Assert.Equal(soldier.PlayerSuspicion < Igi1HumanAi.JogSuspicion, soldier.IsWalking);
+
         // Still on his way, and still sure enough to be: an investigating soldier does not forget.
         Assert.True(soldier.IsInvestigating, "he gave up before getting there");
         Assert.True(soldier.PlayerSuspicion >= Igi1HumanAi.WalkOverSuspicion, $"his suspicion drained to {soldier.PlayerSuspicion:0.00} while investigating");

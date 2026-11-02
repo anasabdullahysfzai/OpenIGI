@@ -35,6 +35,9 @@ public sealed partial class Igi1HumanAi
     /// <summary>Above this suspicion a soldier walks over to where he heard the player, not only turns to look.</summary>
     public const double WalkOverSuspicion = 0.3;
 
+    /// <summary>Above this suspicion he jogs there: he all but saw someone.</summary>
+    public const double JogSuspicion = 0.6;
+
     /// <summary>How long a soldier stands looking at where he heard something, in seconds.</summary>
     public const float LookSeconds = 2.5f;
 
@@ -154,7 +157,7 @@ public sealed partial class Igi1HumanAi
         bool walkOver = PlayerSuspicion >= WalkOverSuspicion;
         InvestigatingAt = heard;
         ModernLog?.Invoke(FormattableString.Invariant(
-            $"{(walkOver ? "walks over to" : "looks at")} something {Vector3d.Distance(Position, heard) / 4096.0:0.0} m away, suspicion {PlayerSuspicion:0.00}"));
+            $"{(!walkOver ? "looks at" : PlayerSuspicion >= JogSuspicion ? "jogs over to" : "walks over to")} something {Vector3d.Distance(Position, heard) / 4096.0:0.0} m away, suspicion {PlayerSuspicion:0.00}"));
 
         // A walk over ends in a search of the place, once he has looked and found nothing (ContinueSearch).
         _investigationWalked = walkOver;
@@ -166,7 +169,7 @@ public sealed partial class Igi1HumanAi
         Vector3d? past = walkOver && across > 1.0
             ? new Vector3d(heard.X + (dx * LookPastInUnits / across), heard.Y + (dy * LookPastInUnits / across), heard.Z)
             : null;
-        Install(heard, walkOver, LookSeconds, past);
+        Install(heard, walkOver, LookSeconds, past, run: walkOver && PlayerSuspicion >= JogSuspicion);
     }
 
     /// <summary>Installs a walk to a point and a look, or a look alone, as the script installs its own actions.</summary>
@@ -174,8 +177,9 @@ public sealed partial class Igi1HumanAi
     /// <param name="walk">Whether to walk there first.</param>
     /// <param name="lookSeconds">How long to hold the look once turned.</param>
     /// <param name="lookAt">What to look at instead of the point.</param>
+    /// <param name="run">Whether to jog there rather than walk: the walk-over's gait is the run flag's, read every tick.</param>
     /// <remarks>Both are looked at a man's height above the point given, not at the ground it is on.</remarks>
-    private void Install(Vector3d point, bool walk, float lookSeconds, Vector3d? lookAt = null)
+    private void Install(Vector3d point, bool walk, float lookSeconds, Vector3d? lookAt = null, bool run = false)
     {
         // Unranked: an event dispatches only above the head action's rank, and the archetypes rank ENEMYDETECTION last but one,
         // below even IDLE and WALK. So nothing caps the script while he investigates, and anything it answers -- the sight of
@@ -189,6 +193,10 @@ public sealed partial class Igi1HumanAi
         _currentEventPosition = new Vector3d(point.X, point.Y, point.Z + InvestigateLookHeightInUnits);
         ApplyActions(walk ? [move, look] : [look]);
         _currentEventPosition = before;
+        if (walk)
+        {
+            _scriptedRunGait = run;
+        }
 
         if (lookAt is { } other && _lookAtPoint is not null)
         {

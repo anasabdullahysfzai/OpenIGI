@@ -846,9 +846,11 @@ public sealed partial class Igi1HumanAi
         bool wasSure = human.SeesRaw && human.Suspicion >= 1.0;
         human.SeesRaw = human.Slot.IsVisible;
 
-        // A soldier investigating or searching is looking for someone: he fills as an alerted one does, and does not forget
-        // meanwhile; for a while after a search he still fills as fast.
+        // A soldier investigating or searching does not forget meanwhile. One hunting for someone -- going to where he lost
+        // him, searching, or lately searched -- fills as an alerted one does; one making out a man he can see, looking or
+        // walking towards him, does not, or the glimpse makes itself sure.
         bool investigating = IsInvestigating || IsSearching;
+        bool lookingForSomeone = IsSearching || IsOnEdge || (IsInvestigating && _hunting);
         if (human.SeesRaw || !investigating)
         {
             human.Suspicion = AiSuspicion.Step(
@@ -857,7 +859,7 @@ public sealed partial class Igi1HumanAi
                 snapshot.ViewStrength(human.Candidate.Mark),
                 human.Candidate.Crouching,
                 metresPerSecond,
-                Alerted || investigating || IsOnEdge,
+                Alerted || lookingForSomeone,
                 seconds);
         }
         human.Slot.IsVisible = human.SeesRaw && human.Suspicion >= 1.0;

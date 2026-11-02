@@ -12,7 +12,7 @@ public sealed class AiSuspicionTests : AiSoldierCombatWiringFixture
     private const double Scan = 4.0 / 30.0;
 
     [Fact]
-    public void PlainViewFillsInAboutHalfASecond()
+    public void PlainViewUpCloseFillsInAboutASecond()
     {
         double suspicion = 0.0;
         int scans = 0;
@@ -22,7 +22,7 @@ public sealed class AiSuspicionTests : AiSoldierCombatWiringFixture
             scans++;
         }
 
-        Assert.InRange(scans * Scan, 0.4, 0.7);
+        Assert.InRange(scans * Scan, 0.8, 1.3);
     }
 
     [Fact]
