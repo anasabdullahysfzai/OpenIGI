@@ -23,4 +23,13 @@ internal sealed class Igi1AiTrackedHuman(AiDetectionCandidate candidate)
 
     /// <summary>Gets or sets how fast the human moved between the last two scans, in metres a second.</summary>
     public double MetresPerSecond { get; set; }
+
+    /// <summary>Gets or sets where the soldier last glimpsed the human, which he goes to once he loses him.</summary>
+    public OpenIGI.Core.Numerics.Vector3d? GlimpsedFeet { get; set; }
+
+    /// <summary>Gets or sets whether the soldier has started towards the human this time his suspicion is up.</summary>
+    public bool Approached { get; set; }
+
+    /// <summary>Gets or sets what the sight test last said of the human as logged, for logging only its changes.</summary>
+    public bool SeenAtLastRay { get; set; }
 }

@@ -159,7 +159,11 @@ public readonly record struct HudMessageView(string Text, float Opacity, int Key
 /// <param name="Bearing">Where they are from the view's facing, in radians clockwise: nought ahead, π behind.</param>
 /// <param name="Awareness">How far they are to seeing the player, nought (not at all) to one (seen).</param>
 /// <param name="Mark">The point over their head the eye is drawn at, in world units, or <see langword="null"/> for none.</param>
-public readonly record struct HudThreat(float Bearing, float Awareness, OpenIGI.Core.Numerics.Vector3d? Mark = null);
+/// <param name="Watching">
+/// Whether they have the player in view right now; <see langword="false"/> for one who only holds his suspicion while he
+/// searches, drawn faded.
+/// </param>
+public readonly record struct HudThreat(float Bearing, float Awareness, OpenIGI.Core.Numerics.Vector3d? Mark = null, bool Watching = true);
 
 /// <summary>One weapon on the weapon wheel.</summary>
 /// <param name="Icon">Its picture.</param>

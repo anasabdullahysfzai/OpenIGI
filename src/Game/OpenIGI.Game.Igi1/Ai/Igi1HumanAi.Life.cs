@@ -85,6 +85,7 @@ public sealed partial class Igi1HumanAi
 
         fresh.SetLineOfSight(_sight);
         fresh.SetHearingCover(_hearingCover);
+        fresh.ModernLog = ModernLog;
         fresh.SetEyeTransform(_eyePosition, _eyeOrientation);
         fresh.SetGroundQuery(_ground);
         fresh.SetPatrolPaths(_paths);
@@ -489,14 +490,16 @@ public sealed partial class Igi1HumanAi
         // Declared priority, not a pending-event test, keeps IDLE behind the events that matter: a "nothing
         // pending" condition never let IDLE through while the alarm posted ALARMON every tick, which froze
         // a guard in place for the rest of the alarm.
+        //
+        // The modern AI's investigation and search come first: installed as the script's own actions are, so whatever the
+        // script answers this tick displaces them, but before the empty-stack test, so a step of a search is not taken for
+        // idleness and handed back to the patrol. Nothing is pending with the modern AI off.
+        InvestigatePending();
+        ContinueSearch();
         if (!_pendingActions.HasPending)
         {
             Events.Post(AiEventRecord.Simple(AiEvent.Idle), owner: 0, worldTests: null);
         }
-
-        // The modern AI's investigation of what it heard, installed as the script's own actions are, before the script runs
-        // so that whatever the script answers this tick displaces it. Nothing is heard this way with the modern AI off.
-        InvestigateWhatWasHeard();
 
         // ONE event type dispatches per tick, in priority order, and the script decides what to do about it.
         RunScript();
@@ -509,8 +512,18 @@ public sealed partial class Igi1HumanAi
             RunWithoutAction();
         }
 
+        // For reading a modern-AI play-test back: every change of what he is doing, the original's actions too.
+        if (ModernLog is not null && RunningAction != _loggedAction)
+        {
+            _loggedAction = RunningAction;
+            ModernLog($"now: {_loggedAction ?? "nothing"}");
+        }
+
         StepBodyOrWait();
     }
+
+    // The action last logged as running (ModernLog).
+    private string? _loggedAction;
 
     /// <summary>Gets or sets whether the soldier's Human is dead (<c>0x451330</c>), which the AI reads at the top of its tick.</summary>
     public bool HumanDead { get; set; }

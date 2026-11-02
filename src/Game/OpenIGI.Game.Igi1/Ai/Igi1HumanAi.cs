@@ -668,6 +668,12 @@ public sealed partial class Igi1HumanAi
 
         if (_animationCountdown == 0)
         {
+            // The modern AI: a soldier looking for someone does not stop for an idle animation, which would end the look.
+            if (IsInvestigating || IsSearching)
+            {
+                return;
+            }
+
             Events.Post(AiEventRecord.Simple(AiEvent.Animation), owner: 0, worldTests: null);
             _animationCountdown = NextBounded(_animationRandomTicks) + _animationMinTicks;
         }

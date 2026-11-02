@@ -42,7 +42,9 @@ public static class HudSuspicion
         {
             bool seen = threat.Awareness >= 0.5f;
             float fill = MathF.Min(1f, threat.Awareness * 2f);
-            float strength = appear * (seen ? pulse : 1f);
+
+            // One who only holds his suspicion while he searches, without the player in view, is drawn faded: looking, not seeing.
+            float strength = appear * (seen ? pulse : 1f) * (threat.Watching ? 1f : 0.35f);
             Bgra32 glow = HudDrawContext.Fade(seen ? context.Palette.Danger : Glow, 0.4f * strength);
             Bgra32 track = HudDrawContext.Fade(Track, 0.85f * appear);
             Bgra32 bar = HudDrawContext.Fade(seen ? context.Palette.Danger : Bar, strength);

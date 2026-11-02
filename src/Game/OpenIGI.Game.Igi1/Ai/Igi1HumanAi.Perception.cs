@@ -842,17 +842,44 @@ public sealed partial class Igi1HumanAi
         human.LastFeet = feet;
         human.MetresPerSecond = metresPerSecond;
 
+        bool sawBefore = human.SeesRaw;
+        bool wasSure = human.SeesRaw && human.Suspicion >= 1.0;
         human.SeesRaw = human.Slot.IsVisible;
-        human.Suspicion = AiSuspicion.Step(
-            human.Suspicion,
-            human.SeesRaw,
-            snapshot.ViewStrength(human.Candidate.Mark),
-            human.Candidate.Crouching,
-            metresPerSecond,
-            Alerted,
-            seconds);
+
+        // A soldier investigating or searching is looking for someone: he fills as an alerted one does, and does not forget
+        // meanwhile; for a while after a search he still fills as fast.
+        bool investigating = IsInvestigating || IsSearching;
+        if (human.SeesRaw || !investigating)
+        {
+            human.Suspicion = AiSuspicion.Step(
+                human.Suspicion,
+                human.SeesRaw,
+                snapshot.ViewStrength(human.Candidate.Mark),
+                human.Candidate.Crouching,
+                metresPerSecond,
+                Alerted || investigating || IsOnEdge,
+                seconds);
+        }
         human.Slot.IsVisible = human.SeesRaw && human.Suspicion >= 1.0;
+        if (human.Slot.IsVisible && !wasSure && human.Candidate.IsPlayer)
+        {
+            ModernLog?.Invoke($"is sure: sees the player (doing {RunningAction ?? "nothing"})");
+        }
+
+        if (human.Candidate.IsPlayer)
+        {
+            // The sweep casts its ray only every so often and keeps the verdict between: the ray ran this sweep exactly when
+            // it left its cooldown reset to the whole interval.
+            bool rayRan = human.Slot.IsInCone && human.Slot.RayCooldown == _schedule.RayInterval;
+            FollowGlimpse(human, sawBefore, rayRan);
+        }
     }
+
+    /// <summary>Whether the soldier's cone and sight ray find the player right now, sure of him or not.</summary>
+    /// <remarks>With the modern AI, suspicion holds while he searches; this tells the filling from the held.</remarks>
+    public bool WatchingPlayer =>
+        _tracked.TryGetValue(AiDetectionCandidate.PlayerId, out Igi1AiTrackedHuman? player)
+        && (player.Slot.IsVisible || player.SeesRaw);
 
     /// <summary>How sure the soldier is that the player is there, nought to one; one whenever it sees him.</summary>
     /// <remarks>Always nought or one with the modern AI off, which has no stage short of seeing.</remarks>

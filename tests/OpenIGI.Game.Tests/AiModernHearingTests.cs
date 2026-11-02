@@ -20,14 +20,18 @@ public sealed class AiModernHearingTests : AiSoldierCombatWiringFixture
         Assert.False(soldier.ProbeDetection(eye).InCone, "the player should start out of view");
 
         Assert.True(soldier.ReceiveWalk(player, player, 20 * Metre));
-        for (int end = tick + 120; tick < end; tick++)
+        Assert.True(soldier.PlayerSuspicion > 0.0, "the step raised no suspicion");
+
+        // He turns to it -- and, once he makes the player out, may walk off towards him, so it is the turn that is looked for.
+        bool turned = false;
+        for (int end = tick + 120; tick < end && !turned; tick++)
         {
             soldier.Tick(tick, player, rootMotionThisTick: 0.0);
             Spend(soldier);
+            turned = soldier.ProbeDetection(eye).InCone;
         }
 
-        Assert.True(soldier.ProbeDetection(eye).InCone, "the soldier never turned to the step");
-        Assert.True(soldier.PlayerSuspicion > 0.0, "the step raised no suspicion");
+        Assert.True(turned, "the soldier never turned to the step");
     }
 
     [RequiresGameDataFact]

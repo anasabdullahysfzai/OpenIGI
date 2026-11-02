@@ -227,6 +227,9 @@ internal sealed class SoldierBrainBinder(SoldierContext context, SoldierSightQue
 
                     // The modern AI's hearing: a door between muffles a noise a little, a wall a lot.
                     brain.SetHearingCover((from, to) => SoldierSightQueries.NoiseCoverBetween(sight, from, to));
+
+                    // What the modern AI decides, to runtime.log, so a play-test can be read back.
+                    brain.ModernLog = text => _context.Logger.Information("ModernAi", $"guard {looker}: {text}");
                 }
 
                 // Which script this soldier runs: its own MISSION:AI/<taskid>.qvm when the level ships one,

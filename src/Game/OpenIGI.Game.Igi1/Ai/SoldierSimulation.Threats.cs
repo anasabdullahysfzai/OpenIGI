@@ -13,7 +13,7 @@ public sealed partial class SoldierSimulation
     /// <summary>The ticks a soldier must hold the player in sight for before the mark counts him sure: a second and a half.</summary>
     public const int SureTicks = 45;
 
-    private readonly List<(Vector3d Position, float Awareness)> _threats = [];
+    private readonly List<(Vector3d Position, float Awareness, bool Watching)> _threats = [];
     private readonly Dictionary<Igi1HumanAi, int> _seenSince = [];
 
     /// <summary>
@@ -22,7 +22,7 @@ public sealed partial class SoldierSimulation
     /// sighting it has lost, or one behind a wall, gives the player nothing the player could not know.
     /// </summary>
     /// <returns>The soldiers, refilled each call.</returns>
-    public IReadOnlyList<(Vector3d Position, float Awareness)> Threats()
+    public IReadOnlyList<(Vector3d Position, float Awareness, bool Watching)> Threats()
     {
         _threats.Clear();
         foreach ((SoldierView view, Igi1HumanAi brain) in Brains)
@@ -34,7 +34,7 @@ public sealed partial class SoldierSimulation
                 // The modern AI's soldier making the player out: nought to a half as its suspicion fills.
                 if (!view.IsDead && brain.PlayerIsEnemy && brain.PlayerSuspicion > 0.0)
                 {
-                    _threats.Add((view.Position, 0.5f * (float)brain.PlayerSuspicion));
+                    _threats.Add((view.Position, 0.5f * (float)brain.PlayerSuspicion, brain.WatchingPlayer));
                 }
 
                 continue;
@@ -46,7 +46,7 @@ public sealed partial class SoldierSimulation
                 _seenSince[brain] = since;
             }
 
-            _threats.Add((view.Position, 0.5f + (0.5f * Math.Clamp((float)(TickCount - since) / SureTicks, 0f, 1f))));
+            _threats.Add((view.Position, 0.5f + (0.5f * Math.Clamp((float)(TickCount - since) / SureTicks, 0f, 1f)), true));
         }
 
         return _threats;
@@ -96,7 +96,7 @@ public sealed partial class SoldierSimulation
                 return PlayerAlertStatus.Detected;
             }
 
-            alerted |= brain.Alerted;
+            alerted |= brain.Alerted || brain.IsSearching;
             suspicious |= brain.PlayerSuspicion > 0.0;
         }
 

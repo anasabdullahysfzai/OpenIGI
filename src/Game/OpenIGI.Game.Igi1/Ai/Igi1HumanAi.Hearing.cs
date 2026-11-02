@@ -38,8 +38,24 @@ public sealed partial class Igi1HumanAi
     /// <summary>How long a soldier stands looking at where he heard something, in seconds.</summary>
     public const float LookSeconds = 2.5f;
 
-    // Where the soldier heard something since its last tick, which it investigates on its next.
+    // Where the soldier heard or glimpsed something since its last tick, which it investigates on its next.
     private Vector3d? _heardAt;
+
+    // Whether that point replaces whatever he is already investigating.
+    private bool _redirect;
+
+    /// <summary>Gets the last point the soldier was sent to look at or walk to, by what he heard or glimpsed.</summary>
+    public Vector3d? InvestigatingAt { get; private set; }
+
+    /// <summary>Gets whether the soldier is looking at or walking to something he heard or glimpsed right now.</summary>
+    /// <remarks>While he is, he counts as alerted to the suspicion's fill and his suspicion does not drain.</remarks>
+    public bool IsInvestigating => InvestigatingAt is not null && (_lookAtPoint is not null || IsActionActive("AIAction_MoveToEvent"));
+
+    /// <summary>How far above the investigated point the soldier looks, in world units: a standing man's chest.</summary>
+    private const double InvestigateLookHeightInUnits = 1.4 * 4096.0;
+
+    /// <summary>How far past a point he walked to the soldier looks, in world units.</summary>
+    private const double LookPastInUnits = 5.0 * 4096.0;
 
     // What stands between him and a noise (SetHearingCover); without it, the sight test's wall or nothing.
     private Func<Vector3d, Vector3d, NoiseCover>? _hearingCover;
@@ -106,12 +122,16 @@ public sealed partial class Igi1HumanAi
         return true;
     }
 
-    /// <summary>Turns him to what he heard, and walks him over to it when he is suspicious enough; once a tick, before the script.</summary>
+    /// <summary>
+    /// Turns him to what he heard or glimpsed, and walks him over to it when he is suspicious enough; once a tick, before the
+    /// script.
+    /// </summary>
     /// <remarks>
     /// Installed as the script installs its own actions, so whatever the script answers this tick -- the sight of the player,
-    /// a round -- displaces it, and a soldier already looking or walking to a noise keeps going.
+    /// a round -- displaces it. A soldier already looking or walking to something keeps going, unless the new point is a
+    /// redirect (<see cref="_redirect"/>): the place he last glimpsed the player, once he has lost him.
     /// </remarks>
-    private void InvestigateWhatWasHeard()
+    private void InvestigatePending()
     {
         if (_heardAt is not { } heard)
         {
@@ -119,18 +139,60 @@ public sealed partial class Igi1HumanAi
         }
 
         _heardAt = null;
-        if (_combatInstalled || _lookAtPoint is not null || IsActionActive("AIAction_MoveToEvent"))
+        bool redirect = _redirect;
+        _redirect = false;
+
+        // Something new is worth more than a search of something old: it ends the search. Only a look or a walk at something
+        // heard or glimpsed keeps going.
+        bool busy = !_searching && (_lookAtPoint is not null || IsActionActive("AIAction_MoveToEvent"));
+        if (_combatInstalled || (!redirect && busy))
         {
             return;
         }
 
+        CancelSearch();
         bool walkOver = PlayerSuspicion >= WalkOverSuspicion;
-        AiProducedAction look = new("AIAction_LookAtEvent", [0, (int)AiActionFlagWord.None], 0, [LookSeconds, 0f]);
-        AiProducedAction move = new("AIAction_MoveToEvent", [0, (int)AiActionFlagWord.None], 0);
+        InvestigatingAt = heard;
+        ModernLog?.Invoke(FormattableString.Invariant(
+            $"{(walkOver ? "walks over to" : "looks at")} something {Vector3d.Distance(Position, heard) / 4096.0:0.0} m away, suspicion {PlayerSuspicion:0.00}"));
+
+        // A walk over ends in a search of the place, once he has looked and found nothing (ContinueSearch).
+        _investigationWalked = walkOver;
+
+        // Walking over, he ends up all but on the point, and a look at it from there is a look at his boots: he peers on past
+        // it instead, the way he came, at the same height.
+        double dx = heard.X - Position.X, dy = heard.Y - Position.Y;
+        double across = Math.Sqrt((dx * dx) + (dy * dy));
+        Vector3d? past = walkOver && across > 1.0
+            ? new Vector3d(heard.X + (dx * LookPastInUnits / across), heard.Y + (dy * LookPastInUnits / across), heard.Z)
+            : null;
+        Install(heard, walkOver, LookSeconds, past);
+    }
+
+    /// <summary>Installs a walk to a point and a look, or a look alone, as the script installs its own actions.</summary>
+    /// <param name="point">Where to walk to -- the graph node nearest it -- and, without <paramref name="lookAt"/>, what to look at.</param>
+    /// <param name="walk">Whether to walk there first.</param>
+    /// <param name="lookSeconds">How long to hold the look once turned.</param>
+    /// <param name="lookAt">What to look at instead of the point.</param>
+    /// <remarks>Both are looked at a man's height above the point given, not at the ground it is on.</remarks>
+    private void Install(Vector3d point, bool walk, float lookSeconds, Vector3d? lookAt = null)
+    {
+        // Unranked: an event dispatches only above the head action's rank, and the archetypes rank ENEMYDETECTION last but one,
+        // below even IDLE and WALK. So nothing caps the script while he investigates, and anything it answers -- the sight of
+        // an enemy, a round, a fight, an alert -- displaces the investigation. Ranked first, nothing did, and a soldier sure
+        // of the player finished his walk and his look first. His idle animations wait meanwhile (TickIdleAnimation).
+        const int rank = AiEventQueues.UnboundedPriorityCap;
+        AiProducedAction look = new("AIAction_LookAtEvent", [0, (int)AiActionFlagWord.None], rank, [lookSeconds, 0f]);
+        AiProducedAction move = new("AIAction_MoveToEvent", [0, (int)AiActionFlagWord.None], rank);
 
         Vector3d? before = _currentEventPosition;
-        _currentEventPosition = heard;
-        ApplyActions(walkOver ? [move, look] : [look]);
+        _currentEventPosition = new Vector3d(point.X, point.Y, point.Z + InvestigateLookHeightInUnits);
+        ApplyActions(walk ? [move, look] : [look]);
         _currentEventPosition = before;
+
+        if (lookAt is { } other && _lookAtPoint is not null)
+        {
+            _lookAtPoint = new Vector3d(other.X, other.Y, other.Z + InvestigateLookHeightInUnits);
+        }
     }
 }

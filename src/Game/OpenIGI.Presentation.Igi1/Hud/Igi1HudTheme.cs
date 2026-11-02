@@ -107,12 +107,12 @@ public static class Igi1HudTheme
                 model.AddGlint(scope, strength);
             }
 
-            foreach ((OpenIGI.Core.Numerics.Vector3d at, float awareness) in soldiers.Threats())
+            foreach ((OpenIGI.Core.Numerics.Vector3d at, float awareness, bool watching) in soldiers.Threats())
             {
                 double dx = at.X - player.Body.Position.X, dy = at.Y - player.Body.Position.Y;
                 float ahead = (float)((dx * forwardX) + (dy * forwardY));
                 float across = (float)((dx * forwardY) - (dy * forwardX));
-                model.AddThreat(new HudThreat(MathF.Atan2(across, ahead), awareness, at + new OpenIGI.Core.Numerics.Vector3d(0.0, 0.0, OverHead)));
+                model.AddThreat(new HudThreat(MathF.Atan2(across, ahead), awareness, at + new OpenIGI.Core.Numerics.Vector3d(0.0, 0.0, OverHead), watching));
             }
         }
 

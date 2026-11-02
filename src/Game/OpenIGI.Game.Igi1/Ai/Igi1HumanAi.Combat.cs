@@ -425,6 +425,11 @@ public sealed partial class Igi1HumanAi
     /// </remarks>
     private void EnterCombat()
     {
+        if (!_combatInstalled)
+        {
+            ModernLog?.Invoke("starts fighting");
+        }
+
         // 0x44D160's civilian case installs no combat callback. It must not inherit the guard arm.
         if (Arm == AiCombatArm.None)
         {

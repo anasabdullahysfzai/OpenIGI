@@ -27,6 +27,9 @@ public static class AiSuspicion
     /// <summary>The least share of the fill a human anywhere in a cone gives, so the far end is slow, not never.</summary>
     public const double FloorViewStrength = 0.1;
 
+    /// <summary>The least share for an alerted soldier, who is looking for someone: far off, he still makes him out in seconds.</summary>
+    public const double AlertedFloorViewStrength = 0.3;
+
     /// <summary>What crouching multiplies the fill by.</summary>
     public const double Crouched = 0.6;
 
@@ -56,7 +59,7 @@ public static class AiSuspicion
             : metresPerSecond > RunningAboveMetresPerSecond ? 1.4
             : 1.0;
         double rate = FillPerSecond
-            * Math.Max(FloorViewStrength, viewStrength)
+            * Math.Max(alerted ? AlertedFloorViewStrength : FloorViewStrength, viewStrength)
             * (crouching ? Crouched : 1.0)
             * movement
             * (alerted ? AlertedFactor : 1.0);
