@@ -175,6 +175,55 @@ internal sealed class SoldierSightQueries(SoldierContext context, Action<string,
         return true;
     }
 
+    /// <summary>
+    /// What stands between a listener and a noise, for the modern AI's hearing: nothing, only moving objects -- a door leaf,
+    /// which muffles a little -- or the level's own terrain and buildings, which muffle a lot. <b>Not retail.</b>
+    /// </summary>
+    /// <param name="trace">The world trace.</param>
+    /// <param name="from">The listener's ear.</param>
+    /// <param name="to">The noise.</param>
+    /// <returns>The heaviest cover met along the way.</returns>
+    /// <remarks>Steps past glass, fences and moving objects as the sight test steps past glass, to find a wall behind them.</remarks>
+    public static NoiseCover NoiseCoverBetween(WorldTraceCast trace, Vector3d from, Vector3d to)
+    {
+        ArgumentNullException.ThrowIfNull(trace);
+
+        Vector3d segment = new(to.X - from.X, to.Y - from.Y, to.Z - from.Z);
+        double segmentLength = Math.Sqrt((segment.X * segment.X) + (segment.Y * segment.Y) + (segment.Z * segment.Z));
+        NoiseCover cover = NoiseCover.Open;
+        Vector3d origin = from;
+        double travelled = 0d;
+        for (int step = 0; step <= SightSkipLimit && segmentLength > 0d; step++)
+        {
+            if (!trace(new WorldTraceRequest(origin, to, WorldTraceMask.World), out WorldTraceHit hit))
+            {
+                return cover;
+            }
+
+            if (hit.Kind is WorldTraceHitKind.Terrain or WorldTraceHitKind.StaticObject && !GameMaterial.IsSightTransparent(hit.Material))
+            {
+                return NoiseCover.Wall;
+            }
+
+            if (hit.Kind is WorldTraceHitKind.DynamicObject)
+            {
+                cover = NoiseCover.Door;
+            }
+
+            double advance = hit.Distance + SightSkipEpsilonUnits;
+            if (advance >= segmentLength - travelled)
+            {
+                return cover;
+            }
+
+            travelled += advance;
+            double fraction = travelled / segmentLength;
+            origin = new(from.X + (segment.X * fraction), from.Y + (segment.Y * fraction), from.Z + (segment.Z * fraction));
+        }
+
+        return cover;
+    }
+
     /// <summary>Nearest positive entry of a ray (unit direction) into a sphere, within reach. Distance is along the ray.</summary>
     public static bool RaySphere(Vector3d origin, Vector3d dir, Vector3d centre, double radius, double reach, out double t)
     {

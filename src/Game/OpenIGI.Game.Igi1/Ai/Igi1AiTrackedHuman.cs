@@ -20,4 +20,7 @@ internal sealed class Igi1AiTrackedHuman(AiDetectionCandidate candidate)
 
     /// <summary>Gets or sets where the human stood at the last scan, which its speed is measured from.</summary>
     public OpenIGI.Core.Numerics.Vector3d? LastFeet { get; set; }
+
+    /// <summary>Gets or sets how fast the human moved between the last two scans, in metres a second.</summary>
+    public double MetresPerSecond { get; set; }
 }

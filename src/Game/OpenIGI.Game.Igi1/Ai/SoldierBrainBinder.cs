@@ -224,6 +224,9 @@ internal sealed class SoldierBrainBinder(SoldierContext context, SoldierSightQue
                         to,
                         Igi1HumanAi.SightObstructionTolerance,
                         standsAside: seen is { } looked ? owner => _context.GunStandsAside(owner, looker, looked) : null));
+
+                    // The modern AI's hearing: a door between muffles a noise a little, a wall a lot.
+                    brain.SetHearingCover((from, to) => SoldierSightQueries.NoiseCoverBetween(sight, from, to));
                 }
 
                 // Which script this soldier runs: its own MISSION:AI/<taskid>.qvm when the level ships one,

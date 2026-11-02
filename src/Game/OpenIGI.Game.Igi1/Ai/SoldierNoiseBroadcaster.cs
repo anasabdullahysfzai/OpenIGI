@@ -76,7 +76,15 @@ internal sealed class SoldierNoiseBroadcaster(SoldierContext context)
             // listener on that side does not admit it.
             int shooterTeam = except?.Soldier.Team ?? _context.PlayerTeam;
             int shooterId = except?.Soldier.Id ?? AiDetectionCandidate.PlayerId;
-            return brain.HearGunshot(origin, range, fromSameSide: shooterTeam == view.Soldier.Team, shooterId);
+            bool sameSide = shooterTeam == view.Soldier.Team;
+
+            // The modern AI: his own side's gunfire brings him into the shooter's fight instead.
+            if (sameSide && GameplayCVars.ModernAi.Value && except is not null && _context.Brains.TryGetValue(except, out Igi1HumanAi? ally))
+            {
+                return brain.HearAllyFire(origin, range, ally);
+            }
+
+            return brain.HearGunshot(origin, range, fromSameSide: sameSide, shooterId);
         });
         Broadcast(noise, AiEvent.Gunshot, except?.Soldier.Team ?? _context.PlayerTeam, HumanNoiseFilter, range, origin, (GameTask?)except?.Soldier ?? _context.PlayerTask, line);
         ReportNoise("gunshot", noise.Heard, range);

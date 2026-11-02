@@ -84,6 +84,7 @@ public sealed partial class Igi1HumanAi
         };
 
         fresh.SetLineOfSight(_sight);
+        fresh.SetHearingCover(_hearingCover);
         fresh.SetEyeTransform(_eyePosition, _eyeOrientation);
         fresh.SetGroundQuery(_ground);
         fresh.SetPatrolPaths(_paths);
@@ -492,6 +493,10 @@ public sealed partial class Igi1HumanAi
         {
             Events.Post(AiEventRecord.Simple(AiEvent.Idle), owner: 0, worldTests: null);
         }
+
+        // The modern AI's investigation of what it heard, installed as the script's own actions are, before the script runs
+        // so that whatever the script answers this tick displaces it. Nothing is heard this way with the modern AI off.
+        InvestigateWhatWasHeard();
 
         // ONE event type dispatches per tick, in priority order, and the script decides what to do about it.
         RunScript();

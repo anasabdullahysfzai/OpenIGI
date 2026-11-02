@@ -464,6 +464,14 @@ public sealed partial class Igi1HumanAi
             return false;
         }
 
+        if (GameplayCVars.ModernAi.Value
+            && type is AiEvent.Walk or AiEvent.GroundImpact
+            && !_combatInstalled
+            && _tracked.TryGetValue(AiDetectionCandidate.PlayerId, out Igi1AiTrackedHuman? player))
+        {
+            return HearNoiseModern(player, position, distance, radiusInUnits);
+        }
+
         if (!Events.Post(
                 new AiEventRecord(
                     type,
@@ -656,7 +664,15 @@ public sealed partial class Igi1HumanAi
     /// The alerting soldier's own target — the record's subject (<c>0x48AB10</c> sends
     /// <c>{self, target}</c>).
     /// </param>
-    public bool ReceiveAlert(Vector3d alerterPosition, int source = 0, int target = AiDetectionCandidate.PlayerId)
+    /// <param name="radiusInUnits">
+    /// How far it reaches: the ping's 7 m (<see cref="AlertPingRadiusInUnits"/>), or, for the modern AI's ally fire, the
+    /// shot's own range.
+    /// </param>
+    public bool ReceiveAlert(
+        Vector3d alerterPosition,
+        int source = 0,
+        int target = AiDetectionCandidate.PlayerId,
+        double radiusInUnits = AlertPingRadiusInUnits)
     {
         if (Activity == AiSoldierActivity.Dead)
         {
@@ -664,14 +680,14 @@ public sealed partial class Igi1HumanAi
         }
 
         double distance = Vector3d.Distance(Position, alerterPosition);
-        if (distance > AlertPingRadiusInUnits)
+        if (distance > radiusInUnits)
         {
             return false;
         }
 
         bool posted = Events.Post(
             new AiEventRecord(
-                AiEvent.Alert, -1, AiEventFilter.None, (float)AlertPingRadiusInUnits,
+                AiEvent.Alert, -1, AiEventFilter.None, (float)radiusInUnits,
                 alerterPosition, source, target),
             owner: 0,
             worldTests: null);
@@ -824,6 +840,7 @@ public sealed partial class Igi1HumanAi
             ? Vector3d.Distance(before, feet) / AiCombatParameters.UnitsPerMetre / seconds
             : 0.0;
         human.LastFeet = feet;
+        human.MetresPerSecond = metresPerSecond;
 
         human.SeesRaw = human.Slot.IsVisible;
         human.Suspicion = AiSuspicion.Step(
