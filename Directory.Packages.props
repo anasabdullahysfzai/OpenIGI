@@ -76,6 +76,10 @@
          dependency, so it behaves the same on every platform the port targets and stays AOT-safe:
          the same reasoning that picked StbTrueTypeSharp above. -->
     <PackageVersion Include="NLayer" Version="3.0.0" />
+    <!-- The modern bodies (g_modern_bodies): a glTF character and its clips, read by SharpGLTF's core reader (MIT), its
+         JPEG and PNG textures decoded by StbImageSharp, pure managed like StbTrueTypeSharp above. -->
+    <PackageVersion Include="SharpGLTF.Core" Version="1.0.7" />
+    <PackageVersion Include="StbImageSharp" Version="2.30.16" />
   </ItemGroup>
 
   <ItemGroup Label="Testing">

@@ -13,4 +13,10 @@
     <ProjectReference Include="..\OpenIGI.Presentation\OpenIGI.Presentation.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The modern bodies: a glTF character drawn in a soldier's place (ModernBody). -->
+    <PackageReference Include="SharpGLTF.Core" />
+    <PackageReference Include="StbImageSharp" />
+  </ItemGroup>
+
 </Project>

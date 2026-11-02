@@ -39,6 +39,9 @@ internal sealed class SoldierMember(SoldierAgent agent, MeshHandle mesh)
 
     public MeshHandle Mesh { get; set; } = mesh;
 
+    /// <summary>Gets or sets the modern character drawn in this soldier's place, or <see langword="null"/> for his own model.</summary>
+    public ModernBody? Modern { get; set; }
+
     /// <summary>What this soldier holds, or <see langword="null"/> when the level armed it with nothing.</summary>
     public SoldierHeldWeapon? Weapon { get; set; }
 

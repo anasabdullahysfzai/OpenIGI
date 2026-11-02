@@ -788,6 +788,7 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
         _disposed = true;
         _sim.Retire();
         Release();
+        ReleaseModernBodies();
         _gunShotTracers?.Dispose();
         _gunShotTracers = null;
 
@@ -811,6 +812,8 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
                 {
                     _device.DestroyMesh(member.Mesh);
                 }
+
+                DropModernBody(member);
 
                 SoldierLevelOfDetail.Drop(_device, member);
             }
@@ -925,6 +928,10 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
                 // upload to settle both interpolation streams, then no more skinning or driver traffic.
                 bool posed = member.PoseUploads.ShouldUpload(drawn)
                     && SoldierSkinning.Upload(_device, member, group.Geometry, group.Body.Model, drawn);
+
+                // The modern character drawn in his place, if any, posed every tick whether his own pose moved or not.
+                TickModernBody(group, member);
+
                 if (!posed)
                 {
                     FollowLevel(group, member, posed: false);

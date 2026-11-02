@@ -161,7 +161,15 @@ internal sealed class SoldierWeaponDrawer(
                     _device.SetObjectFogRange(depth - radius, depth + radius);
                 }
 
-                if (level > 0 && level == member.Level && member.LevelMesh.IsValid)
+                if (member.Modern is { Mesh.IsValid: true } modern)
+                {
+                    // The modern character in his place (g_modern_bodies): its own mesh and textures, at every distance.
+                    foreach ((int offset, int count, TextureHandle diffuse) in modern.Subsets)
+                    {
+                        _device.DrawMesh(modern.Mesh, offset, count, modelView, diffuse, TextureHandle.None, BlendMode.Opaque);
+                    }
+                }
+                else if (level > 0 && level == member.Level && member.LevelMesh.IsValid)
                 {
                     SoldierLevel lower = group.Lower[level - 1];
                     DrawSubsets(lower.Geometry, lower.Instance, lower.Pack, member.LevelMesh, modelView);

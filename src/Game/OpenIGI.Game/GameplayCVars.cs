@@ -318,6 +318,33 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "Soldiers grow suspicious before they see you, as in a modern stealth game. Off plays the original's AI.");
 
+    /// <summary>Whether soldiers are drawn as a modern glTF character (<see cref="ModernBodyFile"/>) instead of their own model.</summary>
+    /// <remarks>
+    /// Presentation only: each soldier's own skeleton, clips, hit zones, eye and ragdoll go on as ever, and the character is
+    /// chosen idle or walking, and its walk paced, from how the soldier moves. A dead soldier is drawn as his own model.
+    /// </remarks>
+    public static readonly BoolCVar ModernBodies = CVar.Bool(
+        "g_modern_bodies",
+        false,
+        CVarOptions.Archive,
+        "Draw soldiers as the modern character g_modern_body_file names, instead of their original model.");
+
+    /// <summary>The <c>.glb</c> the modern bodies are read from: a skinned character with clips named <c>idle</c> and <c>walk</c>.</summary>
+    public static readonly StringCVar ModernBodyFile = CVar.Text(
+        "g_modern_body_file",
+        string.Empty,
+        CVarOptions.Archive,
+        "The .glb file of the modern soldier character: a skinned mesh with 'idle' and 'walk' clips.");
+
+    /// <summary>How far the modern character is turned about up, in degrees, for one authored facing another way.</summary>
+    public static readonly NumericCVar<float> ModernBodyYaw = CVar.Float(
+        "g_modern_body_yaw",
+        0f,
+        -180f,
+        180f,
+        CVarOptions.Archive,
+        "Turns the modern soldier character about up, in degrees, if it faces the wrong way.");
+
     /// <summary>Wires the profile variable to the values it stands for.</summary>
     /// <remarks>
     /// A static constructor rather than a registry, the same way <c>AudioCVars</c> does it and for the
