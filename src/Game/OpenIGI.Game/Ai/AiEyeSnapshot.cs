@@ -112,16 +112,7 @@ public readonly struct AiEyeSnapshot
     /// </remarks>
     public bool IsVisible(Vector3d target)
     {
-        Vector3d delta = new(target.X - Position.X, target.Y - Position.Y, target.Z - Position.Z);
-
-        // local = delta . M, the engine's row-vector convention: component k is column k dotted with delta.
-        double x = (Orientation.M31 * delta.Z) + (Orientation.M21 * delta.Y) + (Orientation.M11 * delta.X);
-        double y = (Orientation.M32 * delta.Z) + (Orientation.M22 * delta.Y) + (Orientation.M12 * delta.X);
-        double z = (Orientation.M33 * delta.Z) + (Orientation.M23 * delta.Y) + (Orientation.M13 * delta.X);
-
-        double distance = Math.Sqrt((x * x) + (y * y) + (z * z));
-        double elevation = Math.Abs(AiVision.AngleFromForward(y, z));
-        double azimuth = Math.Abs(AiVision.AngleFromForward(y, x));
+        (double distance, double elevation, double azimuth) = Locate(target);
 
         if (distance <= Primary.Length && elevation < Primary.Alpha && azimuth < Primary.Gamma)
         {
@@ -132,5 +123,34 @@ public readonly struct AiEyeSnapshot
             && distance <= Secondary.Length
             && elevation < Secondary.Alpha
             && azimuth < Secondary.Gamma;
+    }
+
+    /// <summary>How squarely a point sits in view: nought outside both cones, towards one near and dead ahead.</summary>
+    /// <param name="target">The point, in world units.</param>
+    /// <returns>
+    /// The better cone's <c>(1 - distance / length) * (1 - 0.6 * azimuth / gamma)</c>: the near half of a cone counts most,
+    /// and its rim still counts four tenths of its middle. <b>Not retail</b>: what the modern AI's suspicion fills by.
+    /// </returns>
+    public double ViewStrength(Vector3d target)
+    {
+        (double distance, double elevation, double azimuth) = Locate(target);
+        return Math.Max(In(Primary), SecondaryEnabled ? In(Secondary) : 0.0);
+
+        double In(AiSnapshotCone cone) =>
+            cone.Length > 0.0 && distance <= cone.Length && elevation < cone.Alpha && azimuth < cone.Gamma
+                ? (1.0 - (distance / cone.Length)) * (1.0 - (0.6 * azimuth / cone.Gamma))
+                : 0.0;
+    }
+
+    private (double Distance, double Elevation, double Azimuth) Locate(Vector3d target)
+    {
+        Vector3d delta = new(target.X - Position.X, target.Y - Position.Y, target.Z - Position.Z);
+
+        // local = delta . M, the engine's row-vector convention: component k is column k dotted with delta.
+        double x = (Orientation.M31 * delta.Z) + (Orientation.M21 * delta.Y) + (Orientation.M11 * delta.X);
+        double y = (Orientation.M32 * delta.Z) + (Orientation.M22 * delta.Y) + (Orientation.M12 * delta.X);
+        double z = (Orientation.M33 * delta.Z) + (Orientation.M23 * delta.Y) + (Orientation.M13 * delta.X);
+
+        return (Math.Sqrt((x * x) + (y * y) + (z * z)), Math.Abs(AiVision.AngleFromForward(y, z)), Math.Abs(AiVision.AngleFromForward(y, x)));
     }
 }

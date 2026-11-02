@@ -783,10 +783,18 @@ public sealed partial class Igi1HumanAi
         Eye = Vision.Capture(EyePosition(), EyeOrientation(), Alerted);
         AiEyeSnapshot snapshot = Eye;
         Vector3d eye = EyePosition();
+        bool modern = GameplayCVars.ModernAi.Value;
         foreach (Igi1AiTrackedHuman human in _enemies.Concat(_fallenFriends))
         {
             Vector3d mark = human.Candidate.Mark;
             int looked = human.Candidate.Id;
+            bool gated = modern && human.Candidate.OtherSide;
+            if (gated)
+            {
+                // The sweep's cooldowns keep the visible flag between its tests: hand it back what it last said, not the gate's.
+                human.Slot.IsVisible = human.SeesRaw;
+            }
+
             _schedule.Sweep(
                 human.Slot,
                 () => snapshot.IsVisible(mark),
@@ -796,8 +804,46 @@ public sealed partial class Igi1HumanAi
                     return _sight is null || _sight(eye, mark, looked);
                 },
                 Vector3d.Distance(eye, mark));
+
+            if (gated)
+            {
+                GateBySuspicion(human, snapshot);
+            }
         }
     }
+
+    /// <summary>
+    /// The modern AI's gate: the sweep's verdict fills or drains the soldier's suspicion, and the soldier believes it sees the
+    /// human only once that is full -- so everything downstream that reads the visible flag waits on it too.
+    /// </summary>
+    private void GateBySuspicion(Igi1AiTrackedHuman human, AiEyeSnapshot snapshot)
+    {
+        const double seconds = AiDetectionSchedule.PhaseCount / AiCombatParameters.TicksPerSecond;
+        Vector3d feet = human.Candidate.Feet;
+        double metresPerSecond = human.LastFeet is { } before
+            ? Vector3d.Distance(before, feet) / AiCombatParameters.UnitsPerMetre / seconds
+            : 0.0;
+        human.LastFeet = feet;
+
+        human.SeesRaw = human.Slot.IsVisible;
+        human.Suspicion = AiSuspicion.Step(
+            human.Suspicion,
+            human.SeesRaw,
+            snapshot.ViewStrength(human.Candidate.Mark),
+            human.Candidate.Crouching,
+            metresPerSecond,
+            Alerted,
+            seconds);
+        human.Slot.IsVisible = human.SeesRaw && human.Suspicion >= 1.0;
+    }
+
+    /// <summary>How sure the soldier is that the player is there, nought to one; one whenever it sees him.</summary>
+    /// <remarks>Always nought or one with the modern AI off, which has no stage short of seeing.</remarks>
+    public double PlayerSuspicion =>
+        !_tracked.TryGetValue(AiDetectionCandidate.PlayerId, out Igi1AiTrackedHuman? player) ? 0.0
+        : player.Slot.IsVisible ? 1.0
+        : GameplayCVars.ModernAi.Value ? player.Suspicion
+        : 0.0;
 
     // The scan's classification: other side and alive into the enemy list, own side and dead into the
     // fallen-friend list, anything else out.
@@ -824,6 +870,7 @@ public sealed partial class Igi1HumanAi
     private void Unregister(Igi1AiTrackedHuman human)
     {
         human.Slot.IsVisible = false;
+        human.SeesRaw = false;
         human.Slot.IsInCone = false;
         human.Slot.Unregister();
         _enemies.Remove(human);

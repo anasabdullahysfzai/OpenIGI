@@ -300,6 +300,24 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "How long the camera takes to travel between the first- and third-person views, in seconds.");
 
+    /// <summary>Whether soldiers take time to make the player out, as a modern stealth game's do, instead of at once.</summary>
+    /// <remarks>
+    /// <para>
+    /// Off, a soldier sees the player the sweep its cone and sight ray both pass, as the original's does. On, the same two tests
+    /// only start the soldier's suspicion filling, at a pace set by distance, where in the cone the player is, his stance and how
+    /// fast he moves; the soldier believes he sees the player once it is full (<c>Igi1HumanAi</c>'s suspicion gate).
+    /// </para>
+    /// <para>
+    /// Another exception to the rule above: what a soldier sees is game logic. Off by default and forced off by the Vanilla
+    /// profile, so the regression gate is untouched.
+    /// </para>
+    /// </remarks>
+    public static readonly BoolCVar ModernAi = CVar.Bool(
+        "g_modern_ai",
+        false,
+        CVarOptions.Archive,
+        "Soldiers grow suspicious before they see you, as in a modern stealth game. Off plays the original's AI.");
+
     /// <summary>Wires the profile variable to the values it stands for.</summary>
     /// <remarks>
     /// A static constructor rather than a registry, the same way <c>AudioCVars</c> does it and for the
@@ -317,6 +335,7 @@ public static class GameplayCVars
         {
             case GameplayProfile.Vanilla:
                 Ragdoll.Value = false;
+                ModernAi.Value = false;
                 break;
 
             default:

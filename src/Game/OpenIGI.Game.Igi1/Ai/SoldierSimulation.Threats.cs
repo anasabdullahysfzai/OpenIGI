@@ -30,6 +30,13 @@ public sealed partial class SoldierSimulation
             if (view.IsDead || !brain.PlayerIsEnemy || !brain.SeesPlayer)
             {
                 _seenSince.Remove(brain);
+
+                // The modern AI's soldier making the player out: nought to a half as its suspicion fills.
+                if (!view.IsDead && brain.PlayerIsEnemy && brain.PlayerSuspicion > 0.0)
+                {
+                    _threats.Add((view.Position, 0.5f * (float)brain.PlayerSuspicion));
+                }
+
                 continue;
             }
 
@@ -70,12 +77,13 @@ public sealed partial class SoldierSimulation
 
     /// <summary>How far the soldiers are onto the player, in Project I.G.I.'s own terms.</summary>
     /// <returns>
-    /// Detected while any living soldier sees the player -- its AI has no stage short of seeing him; an alarm while one sounds;
-    /// searching while a soldier still holds the alert a lost sighting or an alarm gave it; otherwise none.
+    /// Detected while any living soldier sees the player -- the original's AI has no stage short of seeing him; an alarm while
+    /// one sounds; searching while a soldier still holds the alert a lost sighting or an alarm gave it; suspicious while the
+    /// modern AI's soldier is making him out; otherwise none.
     /// </returns>
     public PlayerAlertStatus AlertStatus()
     {
-        bool alerted = false;
+        bool alerted = false, suspicious = false;
         foreach ((SoldierView view, Igi1HumanAi brain) in Brains)
         {
             if (view.IsDead || !brain.PlayerIsEnemy)
@@ -89,9 +97,13 @@ public sealed partial class SoldierSimulation
             }
 
             alerted |= brain.Alerted;
+            suspicious |= brain.PlayerSuspicion > 0.0;
         }
 
-        return AnyAlarmOn ? PlayerAlertStatus.Alarm : alerted ? PlayerAlertStatus.Searching : PlayerAlertStatus.None;
+        return AnyAlarmOn ? PlayerAlertStatus.Alarm
+            : alerted ? PlayerAlertStatus.Searching
+            : suspicious ? PlayerAlertStatus.Suspicious
+            : PlayerAlertStatus.None;
     }
 
     private readonly List<(Vector3d Position, float Strength)> _glints = [];
