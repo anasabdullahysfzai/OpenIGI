@@ -73,6 +73,9 @@ internal sealed class ModernBody : IDisposable
     /// <summary>Gets the character's runs of triangles and their textures.</summary>
     public (int IndexOffset, int IndexCount, TextureHandle Diffuse, bool Gun)[] Subsets => _asset.Subsets;
 
+    /// <summary>Gets a value indicating whether the character came with its own normal, roughness and metalness.</summary>
+    public bool HasAuthoredDetail => _asset.HasAuthoredDetail;
+
     /// <summary>Gets a value indicating whether the character holds a gun of its own.</summary>
     public bool HasGun => _asset.Subsets.Any(subset => subset.Gun);
 

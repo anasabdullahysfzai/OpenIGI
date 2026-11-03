@@ -19,13 +19,18 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
     [RequiresModernBodyFact]
     public void TheCharacterReadsWholeWithBothClips()
     {
-        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
 
         Assert.Equal(65, asset.Joints.Length);
         Assert.InRange(asset.Vertices.Length, 1000, ushort.MaxValue);
         Assert.Equal(3, asset.Subsets.Length);
         Assert.Single(asset.Subsets, subset => subset.Gun);
         Assert.All(asset.Subsets, subset => Assert.True(subset.Diffuse.IsValid, "a subset has no texture"));
+
+        // The uniform's and the rifle's own normal, roughness and metalness, attached to their colour textures.
+        Assert.True(asset.HasAuthoredDetail, "no detail maps came with the character");
+        Assert.All(asset.Subsets, subset => Assert.Contains(device.TextureDetails, pair => pair.Diffuse == subset.Diffuse));
         Assert.InRange(asset.Idle.Duration, 5f, 12f);
         Assert.InRange(asset.Walk.Duration, 0.8f, 2f);
         Assert.InRange(asset.WalkMetresPerSecond, 0.9f, 1.5f);

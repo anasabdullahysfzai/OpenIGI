@@ -104,6 +104,11 @@ namespace OpenIGI.Rendering;
 /// copy of the lit scene through the streak; a backend without it draws the drop's glint alone.
 /// </para>
 /// </param>
+/// <param name="AuthoredDetail">
+/// Whether the texture's detail map was authored with it rather than derived from it -- a modern character's or its
+/// rifle's own normal, roughness and metalness. Such a map is applied whole whatever the preset's detail strength,
+/// and its roughness and metalness replace the material's, texel by texel. <b>Not retail.</b>
+/// </param>
 public readonly record struct SurfaceMaterial(
     float Roughness = 0.6f,
     float Metallic = 0.0f,
@@ -112,7 +117,8 @@ public readonly record struct SurfaceMaterial(
     bool NoHistory = false,
     bool Glass = false,
     bool Matte = false,
-    bool Rain = false)
+    bool Rain = false,
+    bool AuthoredDetail = false)
 {
     /// <summary>The emissive channel's value for a surface excluded from ambient occlusion.</summary>
     /// <remarks>

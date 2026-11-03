@@ -345,6 +345,26 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "Turns the modern soldier character about up, in degrees, if it faces the wrong way.");
 
+    /// <summary>Whether the modern character is drawn with its own normal, roughness and metal maps, or flat as the originals are.</summary>
+    public static readonly BoolCVar ModernBodyDetail = CVar.Bool(
+        "g_modern_body_detail",
+        true,
+        CVarOptions.Archive,
+        "Draws the modern soldier character with its own normal, roughness and metal maps (0 draws it flat, for comparing).");
+
+    /// <summary>How bright the modern character's colours are drawn, as a multiple of its textures (linear light).</summary>
+    /// <remarks>
+    /// Soldiers are lit as the original lit them -- the level's object ambient plus its sun, set for 2000's art -- which
+    /// washes out a character painted for a modern renderer. This tones it down to sit in the level.
+    /// </remarks>
+    public static readonly NumericCVar<float> ModernBodyTone = CVar.Float(
+        "g_modern_body_tone",
+        0.35f,
+        0.1f,
+        1f,
+        CVarOptions.Archive,
+        "How bright the modern soldier character is drawn, as a multiple of its textures in linear light (1 = as painted; 0.35 sits in I.G.I.'s levels).");
+
     /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
     /// <remarks>
     /// idle, walk, aim, fire, aim_walk, run; hit_front, hit_back, hit_left, hit_right (once each time it is set); die_front,

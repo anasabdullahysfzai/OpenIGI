@@ -1,4 +1,5 @@
 using OpenIGI.Core.Diagnostics;
+using OpenIGI.Core.Graphics;
 using OpenIGI.Game;
 using OpenIGI.Game.Igi1.Ai;
 using OpenIGI.Game.Igi1.Player;
@@ -192,6 +193,14 @@ public sealed partial class SoldierRenderer
                 _modernAssetFailed = true;
                 _logger.Warning(LogCategory, $"Modern bodies off: could not read '{path}': {ex.Message}");
             }
+        }
+
+        if (_modernAsset is not null)
+        {
+            // The vertex colour is decoded from sRGB before it multiplies the albedo, so the linear tone is encoded into it.
+            float tone = GameplayCVars.ModernBodyTone.Value;
+            byte grey = (byte)Math.Round(255.0 * (tone <= 0.0031308f ? 12.92 * tone : (1.055 * Math.Pow(tone, 1.0 / 2.4)) - 0.055));
+            _modernAsset.Tone = Bgra32.FromRgba(grey, grey, grey, 255);
         }
 
         return _modernAsset;

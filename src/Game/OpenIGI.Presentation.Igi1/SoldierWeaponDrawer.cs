@@ -1,3 +1,4 @@
+using OpenIGI.Game;
 using OpenIGI.Core.Diagnostics;
 using OpenIGI.Core.Graphics;
 using OpenIGI.Core.Numerics;
@@ -164,7 +165,18 @@ internal sealed class SoldierWeaponDrawer(
                 if (member.Modern is { Mesh.IsValid: true } modern)
                 {
                     // The modern character in his place (g_modern_bodies): its own mesh and textures, at every distance. His
-                    // rifle is part of it; a corpse has let it go (the game drops its own on the ground).
+                    // rifle is part of it; a corpse has let it go (the game drops its own on the ground). Drawn with its own
+                    // normal, roughness and metalness where it came with them, not as the original's matte body.
+                    if (modern.HasAuthoredDetail && GameplayCVars.ModernBodyDetail.Value)
+                    {
+                        _device.SetMaterialOverride(SurfaceMaterial.Body with
+                        {
+                            NoHistory = member.NoHistoryThisFrame,
+                            Matte = false,
+                            AuthoredDetail = true,
+                        });
+                    }
+
                     foreach ((int offset, int count, TextureHandle diffuse, bool gun) in modern.Subsets)
                     {
                         if (gun && modern.Fallen)

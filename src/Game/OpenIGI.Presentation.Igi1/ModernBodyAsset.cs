@@ -28,6 +28,7 @@ namespace OpenIGI.Presentation.Igi1;
 internal sealed class ModernBodyAsset : IDisposable
 {
     private readonly IGraphicsDevice _device;
+    private readonly List<TextureHandle> _details = [];
 
     private ModernBodyAsset(IGraphicsDevice device) => _device = device;
 
@@ -54,6 +55,10 @@ internal sealed class ModernBodyAsset : IDisposable
 
     /// <summary>Gets each primitive's run of <see cref="Indices"/>, its colour texture, and whether it is the gun he holds (a material named <c>Rifle_...</c>).</summary>
     public (int IndexOffset, int IndexCount, TextureHandle Diffuse, bool Gun)[] Subsets { get; private set; } = [];
+
+    /// <summary>Gets a value indicating whether the character's own normal, roughness and metalness came with it, to be drawn with
+    /// (<see cref="SurfaceMaterial.AuthoredDetail"/>).</summary>
+    public bool HasAuthoredDetail => _details.Count > 0;
 
     /// <summary>Gets the lowest point of the bind pose, along glTF's up, which the soldier's lowest point is matched to.</summary>
     public float LowestY { get; private set; }
@@ -262,6 +267,10 @@ internal sealed class ModernBodyAsset : IDisposable
         }
     }
 
+    /// <summary>Gets or sets the colour every vertex carries, which the albedo is multiplied by: how far the character is toned
+    /// down to sit in a level lit for the original's darker art (<see cref="Game.GameplayCVars.ModernBodyTone"/>).</summary>
+    public Bgra32 Tone { get; set; } = Bgra32.White;
+
     /// <summary>Skins the mesh into the soldier's frame, its lowest point at the height given.</summary>
     /// <param name="skin">The joints' skinning matrices (<see cref="Blend"/>).</param>
     /// <param name="yaw">The extra turn about up (<see cref="ToBody"/>).</param>
@@ -291,13 +300,20 @@ internal sealed class ModernBodyAsset : IDisposable
                 new Vector3f(at.X, at.Y, at.Z + lift),
                 new Vector3f(facing.X, facing.Y, facing.Z),
                 uv.X,
-                uv.Y);
+                uv.Y,
+                colour: Tone);
         }
     }
 
     /// <inheritdoc/>
     public void Dispose()
     {
+        foreach (TextureHandle detail in _details)
+        {
+            _device.DestroyTexture(detail);
+        }
+
+        _details.Clear();
         foreach ((_, _, TextureHandle diffuse, _) in Subsets)
         {
             if (diffuse.IsValid)
@@ -409,6 +425,7 @@ internal sealed class ModernBodyAsset : IDisposable
                 {
                     diffuse = Upload(image.Content.Content.ToArray());
                     uploaded[image] = diffuse;
+                    AttachDetail(diffuse, primitive.Material!);
                 }
             }
 
@@ -422,6 +439,55 @@ internal sealed class ModernBodyAsset : IDisposable
         Subsets = [.. subsets];
         LowestY = Vertices.Min(v => v.Position.Y);
     }
+
+    // The material's own normal map and metal-roughness, packed as the renderer reads an authored detail map -- the normal's x
+    // and y (y flipped: glTF's points up the image, the renderer's tangent frame down it), the roughness, the metalness -- and
+    // attached to its colour texture. Nothing attached for a material with neither.
+    private void AttachDetail(TextureHandle diffuse, Material material)
+    {
+        MaterialChannel? normalChannel = material.FindChannel("Normal");
+        MaterialChannel? surfaceChannel = material.FindChannel("MetallicRoughness");
+        ImageResult? normal = Decode(normalChannel?.Texture?.PrimaryImage);
+        ImageResult? surface = Decode(surfaceChannel?.Texture?.PrimaryImage);
+        if (normal is null && surface is null)
+        {
+            return;
+        }
+
+        // glTF's metallic and roughness factors scale the map, and stand for it where there is none.
+        float Factor(string name, float otherwise) =>
+            surfaceChannel?.Parameters.FirstOrDefault(p => p.Name.Contains(name, StringComparison.OrdinalIgnoreCase))?.Value is float value
+                ? value
+                : otherwise;
+        Vector2 factors = new(Factor("Metallic", 0f), Factor("Roughness", 1f));
+        ImageResult size = normal ?? surface!;
+        int width = size.Width, height = size.Height;
+        Bgra32[] packed = new Bgra32[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                (byte nx, byte ny) = normal is null ? ((byte)128, (byte)128) : (Texel(normal, x, y, width, height, 0), Texel(normal, x, y, width, height, 1));
+                float roughness = factors.Y * (surface is null ? 1f : Texel(surface, x, y, width, height, 1) / 255f);
+                float metalness = factors.X * (surface is null ? 1f : Texel(surface, x, y, width, height, 2) / 255f);
+                packed[(y * width) + x] = Bgra32.FromRgba(nx, (byte)(255 - ny), (byte)Math.Clamp(roughness * 255f, 0f, 255f), (byte)Math.Clamp(metalness * 255f, 0f, 255f));
+            }
+        }
+
+        (Bgra32[] chain, int levels) = LinearMipChain.Build(packed, width, height);
+        TextureHandle map = _device.CreateTexture(
+            new TextureDescription(width, height, levels, TextureFilter.Linear, TextureAddressMode.Repeat) { HoldsData = true },
+            chain);
+        _details.Add(map);
+        _device.SetTextureDetail(diffuse, map);
+    }
+
+    private static ImageResult? Decode(SharpGLTF.Schema2.Image? image) =>
+        image is null ? null : ImageResult.FromMemory(image.Content.Content.ToArray(), ColorComponents.RedGreenBlueAlpha);
+
+    // One channel of an image at the place a texel of a map the size given falls on it.
+    private static byte Texel(ImageResult image, int x, int y, int width, int height, int channel) =>
+        image.Data[((((y * image.Height / height) * image.Width) + (x * image.Width / width)) * 4) + channel];
 
     // A JPEG or PNG, decoded and uploaded with its whole mip chain.
     private TextureHandle Upload(byte[] encoded)
