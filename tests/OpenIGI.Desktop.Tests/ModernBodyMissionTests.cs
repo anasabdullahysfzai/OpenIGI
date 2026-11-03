@@ -1,5 +1,4 @@
 using OpenIGI.Core.Graphics;
-using OpenIGI.Core.Numerics;
 using OpenIGI.Engine.Flow;
 using OpenIGI.Engine.Level;
 using OpenIGI.Engine.Resources;

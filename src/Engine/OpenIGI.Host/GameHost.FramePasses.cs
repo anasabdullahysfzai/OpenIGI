@@ -671,6 +671,7 @@ public sealed partial class GameHost
         }
 
         AdvanceRendererSwitch();
+        WritePendingScreenshot();
 
         if (_options.ExitAfterFrames > 0 && _loop.Clock.FrameCount >= _options.ExitAfterFrames)
         {

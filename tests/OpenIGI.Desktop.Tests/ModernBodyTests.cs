@@ -23,7 +23,8 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
 
         Assert.Equal(65, asset.Joints.Length);
         Assert.InRange(asset.Vertices.Length, 1000, ushort.MaxValue);
-        Assert.Equal(2, asset.Subsets.Length);
+        Assert.Equal(3, asset.Subsets.Length);
+        Assert.Single(asset.Subsets, subset => subset.Gun);
         Assert.All(asset.Subsets, subset => Assert.True(subset.Diffuse.IsValid, "a subset has no texture"));
         Assert.InRange(asset.Idle.Duration, 5f, 12f);
         Assert.InRange(asset.Walk.Duration, 0.8f, 2f);
@@ -120,6 +121,35 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
             output.WriteLine($"{name}: {hit.Duration:0.00} s, head pushed ({push.X:0.00}, {push.Y:0.00}) m, {along:0.00} m away from the shooter");
             Assert.True(along > 0.05f, $"{name}: the head goes {along:0.00} m away from the shooter");
         }
+    }
+
+    [RequiresModernBodyFact]
+    public void InAFightHisRifleComesUpAndHeRuns()
+    {
+        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        Assert.NotSame(asset.Idle, asset.AimIdle);
+        Assert.NotSame(asset.AimIdle, asset.Fire);
+        Assert.NotSame(asset.Walk, asset.AimWalk);
+        Assert.NotSame(asset.AimWalk, asset.Run);
+        output.WriteLine($"walk {asset.Walk.MetresPerSecond:0.00} m/s, aimed walk {asset.AimWalk.MetresPerSecond:0.00}, run {asset.Run.MetresPerSecond:0.00}");
+        Assert.InRange(asset.AimWalk.MetresPerSecond, 0.8f, 2f);
+        Assert.InRange(asset.Run.MetresPerSecond, 2.5f, 6f);
+
+        // The rifle along his facing (+Y) when he aims; held low across him at ease.
+        float Reach(ModernClip stand)
+        {
+            Matrix4x4[] world = new Matrix4x4[asset.Rest.Length], skin = new Matrix4x4[asset.Joints.Length];
+            asset.PoseFall(stand, 0.5f, world, skin);
+            Vertex3D[] vertices = new Vertex3D[asset.Vertices.Length];
+            asset.Skin(skin, 0f, 0f, vertices);
+            (int offset, int count, _, _) = asset.Subsets.Single(subset => subset.Gun);
+            IEnumerable<Vertex3D> gun = asset.Indices.Skip(offset).Take(count).Select(i => vertices[i]);
+            return gun.Max(v => v.Position.Y) - gun.Min(v => v.Position.Y);
+        }
+
+        float atEase = Reach(asset.Idle), aimed = Reach(asset.AimIdle), firing = Reach(asset.Fire);
+        output.WriteLine($"rifle reaches {atEase:0.00} m forward at ease, {aimed:0.00} aimed, {firing:0.00} firing");
+        Assert.True(aimed > 0.6f && firing > 0.6f, "the rifle does not point where he faces when he aims");
     }
 
     // The posed mesh in the soldier's frame.

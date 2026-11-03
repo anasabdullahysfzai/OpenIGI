@@ -22,4 +22,11 @@ public readonly record struct SoldierSnapshot(
     bool IsDead,
     int Animation,
     float HealthFraction,
-    bool IsCutsceneActor);
+    bool IsCutsceneActor)
+{
+    /// <summary>Gets the soldier's task id, as the log names it.</summary>
+    public int Id { get; init; }
+
+    /// <summary>Gets which way it faces, along the ground, unit length.</summary>
+    public Vector3d Forward { get; init; }
+}

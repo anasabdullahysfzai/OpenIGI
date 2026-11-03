@@ -1,6 +1,5 @@
 using System.Numerics;
 using OpenIGI.Core.Graphics;
-using OpenIGI.Core.Numerics;
 using OpenIGI.Rendering;
 
 namespace OpenIGI.Presentation.Igi1;
@@ -21,6 +20,12 @@ internal sealed class ModernBody : IDisposable
     /// <summary>The slowest and fastest the walk is played, against its own pace, before it would look wrong.</summary>
     public const float SlowestPace = 0.5f, FastestPace = 2.0f;
 
+    /// <summary>Above this ground speed, in metres a second, he runs; below the second, a runner walks again.</summary>
+    public const float RunAbove = 2.2f, RunBelow = 1.8f;
+
+    /// <summary>How long a shot keeps the firing clip playing, in seconds.</summary>
+    public const float FireSeconds = 0.6f;
+
     private const float TickSeconds = 1f / 30f;
 
     private readonly ModernBodyAsset _asset;
@@ -28,16 +33,21 @@ internal sealed class ModernBody : IDisposable
     private readonly Matrix4x4[] _world;
     private readonly Matrix4x4[] _skin;
     private readonly Vertex3D[] _vertices;
-    private float _idleTime;
-    private float _walkTime;
-    private float _walkWeight;
+    private float _standTime;
+    private float _stride;
+    private float _moveWeight;
+    private ModernClip _stand;
+    private ModernClip _move;
+    private ModernMix _before;
+    private float _fade = 1f;
+    private bool _running;
+    private int _shotsSeen;
+    private float _firingFor;
     private ModernClip? _fall;
     private float _fallTime;
     private float _fallRaise = float.NaN;
     private float _floor;
     private ModernClip? _hit;
-    private float _yaw;
-    private float _lift;
     private float _hitTime;
 
     /// <summary>Initializes a new instance of the <see cref="ModernBody"/> class, its mesh in the bind pose.</summary>
@@ -47,59 +57,24 @@ internal sealed class ModernBody : IDisposable
     {
         _asset = asset;
         _device = device;
+        (_stand, _move) = (asset.Idle, asset.Walk);
+        _before = new ModernMix(asset.Idle, 0f, asset.Walk, 0f, 0f);
         _world = new Matrix4x4[asset.Rest.Length];
         _skin = new Matrix4x4[asset.Joints.Length];
         _vertices = new Vertex3D[asset.Vertices.Length];
         asset.Pose(0f, 0f, 0f, _world, _skin);
         asset.Skin(_skin, 0f, 0f, _vertices);
         Mesh = device.CreateAnimatedMesh(_vertices, asset.Indices);
-        ReadHands(0f, 0f);
-        Reference = (Grip.Position, Hand(asset.LeftHand, 0f, 0f), Grip.Rotation);
-    }
-
-    /// <summary>Gets where the right hand is and how it is turned, in the soldier's frame, metres, as last posed; the gun rides it.</summary>
-    public (Vector3 Position, Matrix3f Rotation) Grip { get; private set; }
-
-    /// <summary>Gets both hands and the right one's turn in the idle's first frame, which a gun is fitted to (<see cref="FitGun"/>).</summary>
-    public (Vector3 Right, Vector3 Left, Matrix3f Rotation) Reference { get; }
-
-    /// <summary>Gets where the left hand is, in the soldier's frame, metres, as last posed.</summary>
-    public Vector3 Left => Hand(_asset.LeftHand, _yaw, _lift);
-
-    /// <summary>Gets how the last gun was fitted (<see cref="FitGun"/>): the model's forward and up in the gun's frame, and the axes taken.</summary>
-    public string LastFit { get; private set; } = string.Empty;
-
-    /// <summary>Gets a value indicating whether the character has hands to hold a gun in.</summary>
-    public bool HasHands => _asset.RightHand >= 0 && _asset.LeftHand >= 0;
-
-    /// <summary>
-    /// Works out how a gun sits in the right hand, from how the soldier's own model holds it: its barrel along from the right hand
-    /// to the left in the idle, its top up. The gun's own barrel and top are its axes nearest the model's forward and up.
-    /// </summary>
-    /// <param name="modelHand">The soldier's own model's gun hand, which the gun is drawn turned by, in the soldier's frame.</param>
-    /// <returns>The turn from the right hand to the gun, to be put after <see cref="Grip"/>'s.</returns>
-    public Matrix3f FitGun(Matrix3f modelHand)
-    {
-        // Matrix3f is M . v here, as the drawer applies it: a column is where a local axis goes.
-        Vector3 barrelLocal = Snap(Times(modelHand.Transposed(), Vector3.UnitY), Vector3.Zero);
-        Vector3 topLocal = Snap(Times(modelHand.Transposed(), Vector3.UnitZ), barrelLocal);
-        Vector3 sideLocal = Vector3.Cross(barrelLocal, topLocal);
-        LastFit = FormattableString.Invariant(
-            $"{Times(modelHand.Transposed(), Vector3.UnitY):0.00} -> {barrelLocal}, top {Times(modelHand.Transposed(), Vector3.UnitZ):0.00} -> {topLocal}");
-
-        Vector3 barrel = Vector3.Normalize(Reference.Left - Reference.Right);
-        Vector3 top = Vector3.Normalize(Vector3.UnitZ - (Vector3.Dot(Vector3.UnitZ, barrel) * barrel));
-        Vector3 side = Vector3.Cross(barrel, top);
-
-        Matrix3f gun = Columns(barrel, top, side) * Columns(barrelLocal, topLocal, sideLocal).Transposed();
-        return Reference.Rotation.Transposed() * gun;
     }
 
     /// <summary>Gets the mesh the body is drawn from.</summary>
     public MeshHandle Mesh { get; private set; }
 
     /// <summary>Gets the character's runs of triangles and their textures.</summary>
-    public (int IndexOffset, int IndexCount, TextureHandle Diffuse)[] Subsets => _asset.Subsets;
+    public (int IndexOffset, int IndexCount, TextureHandle Diffuse, bool Gun)[] Subsets => _asset.Subsets;
+
+    /// <summary>Gets a value indicating whether the character holds a gun of its own.</summary>
+    public bool HasGun => _asset.Subsets.Any(subset => subset.Gun);
 
     /// <summary>Gets or sets how far to raise the body, in metres, so its lowest point meets the soldier's; null until measured.</summary>
     public float? Lift { get; set; }
@@ -133,7 +108,9 @@ internal sealed class ModernBody : IDisposable
     /// <param name="moved">How far the soldier moved this tick along the ground, in metres.</param>
     /// <param name="yaw">The character's extra turn about up, in radians.</param>
     /// <param name="raise">How far to raise the body, in metres: what the soldier's own clip has lowered where he is drawn.</param>
-    public void Tick(float moved, float yaw, float raise = 0f)
+    /// <param name="aiming">Whether he is in a fight, with his rifle up.</param>
+    /// <param name="shots">How many shots he has fired, which a firing clip follows.</param>
+    public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0)
     {
         if (_fall is { } fall)
         {
@@ -160,16 +137,37 @@ internal sealed class ModernBody : IDisposable
         }
 
         Speed = moved / TickSeconds;
-        bool walking = Speed >= StandingBelow;
+        bool moving = Speed >= StandingBelow;
         float step = TickSeconds / BlendSeconds;
-        _walkWeight = Math.Clamp(_walkWeight + (walking ? step : -step), 0f, 1f);
+        _moveWeight = Math.Clamp(_moveWeight + (moving ? step : -step), 0f, 1f);
 
-        // The walk is played at the soldier's pace, so its feet keep to the ground he covers.
-        float pace = walking && _asset.WalkMetresPerSecond > 0f
-            ? Math.Clamp(Speed / _asset.WalkMetresPerSecond, SlowestPace, FastestPace)
+        // What he does: a fight brings the rifle up, a shot fires it, and fast enough is a run.
+        if (shots != _shotsSeen)
+        {
+            _shotsSeen = shots;
+            _firingFor = FireSeconds;
+        }
+
+        _firingFor = Math.Max(0f, _firingFor - TickSeconds);
+        _running = moving && (_running ? Speed > RunBelow : Speed > RunAbove);
+        ModernClip stand = _firingFor > 0f ? _asset.Fire : aiming ? _asset.AimIdle : _asset.Idle;
+        ModernClip move = _running ? _asset.Run : aiming ? _asset.AimWalk : _asset.Walk;
+        if (!ReferenceEquals(stand, _stand) || !ReferenceEquals(move, _move))
+        {
+            // Faded from what was showing, held where it was; mid-fade, from whichever of the two showed more.
+            _before = _fade < 0.5f ? _before : Mix(_stand, _move);
+            (_stand, _move, _fade) = (stand, move, 0f);
+        }
+
+        _fade = Math.Min(1f, _fade + (TickSeconds / BlendSeconds));
+
+        // The moving clip is played at the soldier's pace, so its feet keep to the ground he covers; a change of gait keeps the
+        // stride where it was.
+        float pace = moving && move.MetresPerSecond > 0f
+            ? Math.Clamp(Speed / move.MetresPerSecond, SlowestPace, FastestPace)
             : 1f;
-        _walkTime += TickSeconds * pace;
-        _idleTime += TickSeconds;
+        _stride = (_stride + (TickSeconds * pace / move.Duration)) % 1f;
+        _standTime += TickSeconds;
 
         float hitWeight = 0f;
         if (_hit is { } hit)
@@ -182,19 +180,22 @@ internal sealed class ModernBody : IDisposable
             }
         }
 
-        _asset.Pose(_idleTime, _walkTime, Smooth(_walkWeight), _world, _skin, _hit, _hitTime, hitWeight);
+        _asset.Pose(Mix(_stand, _move), _before, Smooth(_fade), _world, _skin, _hit, _hitTime, hitWeight);
         _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
-        ReadHands(yaw, (Lift ?? 0f) + raise);
         _device.UpdateAnimatedMesh(Mesh, _vertices);
     }
+
+    // A pair of clips where the body is in them now.
+    private ModernMix Mix(ModernClip stand, ModernClip move) =>
+        new(stand, _standTime, move, _stride * move.Duration, Smooth(_moveWeight));
 
     /// <summary>Works out how fast a character's walk clip covers ground, in metres a second, as its skeleton scales it.</summary>
     /// <remarks>Run once, as the character loads (<see cref="ModernBodyAsset.WalkMetresPerSecond"/>).</remarks>
     /// <param name="asset">The character.</param>
     /// <returns>The pace.</returns>
-    public static float WalkSpeed(ModernBodyAsset asset)
+    /// <param name="walk">The moving clip.</param>
+    public static float WalkSpeed(ModernBodyAsset asset, ModernClip walk)
     {
-        ModernClip walk = asset.Walk;
         int root = walk.TravelNode;
         int parent = root >= 0 ? asset.Parents[root] : -1;
         if (parent < 0)
@@ -231,51 +232,6 @@ internal sealed class ModernBody : IDisposable
             _device.DestroyMesh(Mesh);
             Mesh = default;
         }
-    }
-
-    private static Vector3 Times(Matrix3f m, Vector3 v) =>
-        new((m.M11 * v.X) + (m.M12 * v.Y) + (m.M13 * v.Z), (m.M21 * v.X) + (m.M22 * v.Y) + (m.M23 * v.Z), (m.M31 * v.X) + (m.M32 * v.Y) + (m.M33 * v.Z));
-
-    private static Matrix3f Columns(Vector3 a, Vector3 b, Vector3 c) => new(a.X, b.X, c.X, a.Y, b.Y, c.Y, a.Z, b.Z, c.Z);
-
-    // The unit axis, signed, nearest a direction, leaving out one already taken.
-    private static Vector3 Snap(Vector3 v, Vector3 taken)
-    {
-        Vector3[] axes = [Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ];
-        Vector3 best = Vector3.UnitX;
-        float most = -1f;
-        foreach (Vector3 axis in axes)
-        {
-            float along = Vector3.Dot(v, axis);
-            if (Math.Abs(Vector3.Dot(axis, taken)) < 0.5f && Math.Abs(along) > most)
-            {
-                most = Math.Abs(along);
-                best = along < 0f ? -axis : axis;
-            }
-        }
-
-        return best;
-    }
-
-    // A node's place in the soldier's frame, metres.
-    private Vector3 Hand(int node, float yaw, float lift) =>
-        node < 0 ? Vector3.Zero : ModernBodyAsset.ToBody(_world[node].Translation, yaw) + new Vector3(0f, 0f, lift);
-
-    // The right hand as posed: its place, and its axes carried into the soldier's frame.
-    private void ReadHands(float yaw, float lift)
-    {
-        int node = _asset.RightHand;
-        if (node < 0)
-        {
-            return;
-        }
-
-        Matrix4x4 m = _world[node];
-        Vector3 x = Vector3.Normalize(ModernBodyAsset.ToBody(new Vector3(m.M11, m.M12, m.M13), yaw));
-        Vector3 y = Vector3.Normalize(ModernBodyAsset.ToBody(new Vector3(m.M21, m.M22, m.M23), yaw));
-        Vector3 z = Vector3.Normalize(ModernBodyAsset.ToBody(new Vector3(m.M31, m.M32, m.M33), yaw));
-        Grip = (Hand(node, yaw, lift), Columns(x, y, z));
-        (_yaw, _lift) = (yaw, lift);
     }
 
     // Eased, so the change of gait starts and ends gently.

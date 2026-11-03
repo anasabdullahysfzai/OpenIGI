@@ -163,9 +163,15 @@ internal sealed class SoldierWeaponDrawer(
 
                 if (member.Modern is { Mesh.IsValid: true } modern)
                 {
-                    // The modern character in his place (g_modern_bodies): its own mesh and textures, at every distance.
-                    foreach ((int offset, int count, TextureHandle diffuse) in modern.Subsets)
+                    // The modern character in his place (g_modern_bodies): its own mesh and textures, at every distance. His
+                    // rifle is part of it; a corpse has let it go (the game drops its own on the ground).
+                    foreach ((int offset, int count, TextureHandle diffuse, bool gun) in modern.Subsets)
                     {
+                        if (gun && modern.Fallen)
+                        {
+                            continue;
+                        }
+
                         _device.DrawMesh(modern.Mesh, offset, count, modelView, diffuse, TextureHandle.None, BlendMode.Opaque);
                     }
                 }
@@ -381,6 +387,13 @@ internal sealed class SoldierWeaponDrawer(
     internal void DrawWeapon(SoldierMember member, in Camera3D camera, in Matrix4f projection)
     {
         if (member.Weapon is not { } weapon || !member.HasWeaponFrameState)
+        {
+            return;
+        }
+
+        // A modern body holds its own rifle (g_modern_bodies); the original's is still placed, for its muzzle, but not drawn
+        // until a death drops it.
+        if (member.Modern is { HasGun: true } && !member.Agent.View.IsDead)
         {
             return;
         }

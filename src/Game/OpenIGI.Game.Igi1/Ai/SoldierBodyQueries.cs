@@ -80,7 +80,11 @@ internal sealed class SoldierBodyQueries(SoldierContext context)
                     dead,
                     view.CurrentAnimation,
                     _context.Health.TryGetValue(view, out HumanHealth? hp) ? hp.RemainingFraction : -1f,
-                    member.IsCutsceneActor));
+                    member.IsCutsceneActor)
+                {
+                    Id = view.Soldier.Id,
+                    Forward = new Vector3d(view.Orientation.M12, view.Orientation.M22, 0.0),
+                });
             }
         }
     }

@@ -345,6 +345,17 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "Turns the modern soldier character about up, in degrees, if it faces the wrong way.");
 
+    /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
+    /// <remarks>
+    /// idle, walk, aim, fire, aim_walk, run; hit_front, hit_back, hit_left, hit_right (once each time it is set); die_front,
+    /// die_back, die_front_head, die_back_head (the fall, held). Only what is drawn: the soldier and his AI carry on.
+    /// </remarks>
+    public static readonly StringCVar ModernPose = CVar.Text(
+        "dev_modern_pose",
+        string.Empty,
+        CVarOptions.None,
+        "Forces every modern soldier body into one pose for testing: idle, walk, aim, fire, aim_walk, run, hit_<side>, die_<side>[_head].");
+
     /// <summary>Wires the profile variable to the values it stands for.</summary>
     /// <remarks>
     /// A static constructor rather than a registry, the same way <c>AudioCVars</c> does it and for the

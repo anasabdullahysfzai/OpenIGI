@@ -48,6 +48,14 @@ public sealed partial class GameHost
 
         _followedScene = followed;
 
+        // A test range skips every scene that can be, as a held key would (dev_skip_cutscenes).
+        if (_skipCutscenes && _mission.Cutscenes is { IsPlaying: true, CanBreak: true } skipped)
+        {
+            skipped.RequestBreak();
+            _cutsceneSounds.StopAll();
+            _mission.Objectives?.ClearCutsceneMessages();
+        }
+
         bool completed = _cutsceneSkip.Update(hostCutscene || titleCutscene, held, seconds);
         if (!hostCutscene)
         {

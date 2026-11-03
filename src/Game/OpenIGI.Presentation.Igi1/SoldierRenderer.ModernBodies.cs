@@ -37,7 +37,8 @@ public sealed partial class SoldierRenderer
             return;
         }
 
-        if (!view.IsDead && member.Modern is { Fallen: true })
+        string forced = GameplayCVars.ModernPose.Value;
+        if (!view.IsDead && member.Modern is { Fallen: true } && !forced.StartsWith("die", StringComparison.Ordinal))
         {
             DropModernBody(member);
         }
@@ -52,6 +53,12 @@ public sealed partial class SoldierRenderer
         }
 
         ModernBody body = member.Modern;
+        if (forced.Length > 0 && !view.IsDead)
+        {
+            TickForcedPose(member, body, asset, forced);
+            return;
+        }
+
         float raise = 0f;
         if (!view.IsDead)
         {
@@ -86,7 +93,58 @@ public sealed partial class SoldierRenderer
 
         double dx = member.TickWhere.X - member.PrevTickWhere.X, dy = member.TickWhere.Y - member.PrevTickWhere.Y;
         float moved = member.HasTickState ? (float)Math.Sqrt((dx * dx) + (dy * dy)) : 0f;
-        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise);
+        // In a fight his rifle comes up, and his shots fire it.
+        bool aiming = _sim.Brains.TryGetValue(view, out Igi1HumanAi? fighter)
+            && (fighter.HasCombatRecord || fighter.Activity is AiSoldierActivity.Engaging or AiSoldierActivity.FiringAtTask);
+        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming, member.Agent.ShotSequence);
+    }
+
+    private readonly Dictionary<SoldierMember, string> _modernForcedSeen = [];
+    private int _modernForcedTicks;
+
+    // A test range's pose (dev_modern_pose), whatever the soldier is doing: the clips played on the spot at their own pace.
+    private void TickForcedPose(SoldierMember member, ModernBody body, ModernBodyAsset asset, string forced)
+    {
+        bool fresh = _modernForcedSeen.GetValueOrDefault(member) != forced;
+        _modernForcedSeen[member] = forced;
+        float yaw = GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f;
+        if (forced.StartsWith("die", StringComparison.Ordinal))
+        {
+            if (fresh || !body.Fallen)
+            {
+                body.Fall(asset.Death(forced.Contains("back", StringComparison.Ordinal), forced.EndsWith("head", StringComparison.Ordinal))!);
+            }
+
+            body.Tick(0f, yaw);
+            return;
+        }
+
+        if (fresh && forced.StartsWith("hit_", StringComparison.Ordinal))
+        {
+            (float ahead, float right) = forced switch
+            {
+                "hit_back" => (-1f, 0f),
+                "hit_left" => (0f, -1f),
+                "hit_right" => (0f, 1f),
+                _ => (1f, 0f),
+            };
+            if (asset.Hit(ahead, right) is { } hit)
+            {
+                body.Flinch(hit);
+            }
+        }
+
+        const float tick = 1f / 30f;
+        float moved = forced switch
+        {
+            "walk" => asset.Walk.MetresPerSecond * tick,
+            "aim_walk" => asset.AimWalk.MetresPerSecond * tick,
+            "run" => asset.Run.MetresPerSecond * tick,
+            _ => 0f,
+        };
+        bool aiming = forced is "aim" or "fire" or "aim_walk";
+        int shots = forced == "fire" ? ++_modernForcedTicks / 10 : 0;
+        body.Tick(moved, yaw, 0f, aiming, shots);
     }
 
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.

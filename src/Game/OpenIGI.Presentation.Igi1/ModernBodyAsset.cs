@@ -52,23 +52,29 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the triangles, every primitive's back to back.</summary>
     public ushort[] Indices { get; private set; } = [];
 
-    /// <summary>Gets each primitive's run of <see cref="Indices"/> and its colour texture.</summary>
-    public (int IndexOffset, int IndexCount, TextureHandle Diffuse)[] Subsets { get; private set; } = [];
+    /// <summary>Gets each primitive's run of <see cref="Indices"/>, its colour texture, and whether it is the gun he holds (a material named <c>Rifle_...</c>).</summary>
+    public (int IndexOffset, int IndexCount, TextureHandle Diffuse, bool Gun)[] Subsets { get; private set; } = [];
 
     /// <summary>Gets the lowest point of the bind pose, along glTF's up, which the soldier's lowest point is matched to.</summary>
     public float LowestY { get; private set; }
-
-    /// <summary>Gets the right hand's node, which a gun is held in, or -1.</summary>
-    public int RightHand => Array.IndexOf(Names, "mixamorig:RightHand");
-
-    /// <summary>Gets the left hand's node, or -1.</summary>
-    public int LeftHand => Array.IndexOf(Names, "mixamorig:LeftHand");
 
     /// <summary>Gets the standing clip.</summary>
     public ModernClip Idle { get; private set; } = ModernClip.None;
 
     /// <summary>Gets the walking clip, travel taken out.</summary>
     public ModernClip Walk { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the standing clip with the rifle up, for a fight (<c>aim_idle</c>; the idle where the file has none).</summary>
+    public ModernClip AimIdle { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the standing clip firing (<c>fire</c>; the aim where the file has none).</summary>
+    public ModernClip Fire { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the walk with the rifle up (<c>aim_walk</c>; the walk where the file has none).</summary>
+    public ModernClip AimWalk { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the run (<c>run</c>; the aimed walk where the file has none).</summary>
+    public ModernClip Run { get; private set; } = ModernClip.None;
 
     /// <summary>Gets the falls, by shot from behind then headshot, each null where the file has none.</summary>
     /// <remarks>Named <c>death_front</c>, <c>death_back</c>, <c>death_front_head</c> and <c>death_back_head</c>; played once and held.</remarks>
@@ -119,7 +125,20 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.ReadMesh(skinned.Mesh);
         asset.Idle = ModernClip.Read(Find(model, "idle", path), index, asset.Rest.Length, travelling: false);
         asset.Walk = ModernClip.Read(Find(model, "walk", path), index, asset.Rest.Length, travelling: true);
-        asset.WalkMetresPerSecond = ModernBody.WalkSpeed(asset);
+        ModernClip Optional(string name, bool travelling, ModernClip otherwise) =>
+            model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
+                ? ModernClip.Read(clip, index, asset.Rest.Length, travelling)
+                : otherwise;
+        asset.AimIdle = Optional("aim_idle", travelling: false, asset.Idle);
+        asset.Fire = Optional("fire", travelling: false, asset.AimIdle);
+        asset.AimWalk = Optional("aim_walk", travelling: true, asset.Walk);
+        asset.Run = Optional("run", travelling: true, asset.AimWalk);
+        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run })
+        {
+            moving.MetresPerSecond = ModernBody.WalkSpeed(asset, moving);
+        }
+
+        asset.WalkMetresPerSecond = asset.Walk.MetresPerSecond;
 
         // The fall's root keeps its drop but not its slide: the soldier's own death clip already moves him along the ground.
         Vector3 up = asset.UpOf(asset.Walk.TravelNode);
@@ -169,23 +188,39 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="hitTime">Where in the flinch.</param>
     /// <param name="hitWeight">How much of the flinch.</param>
     public void Pose(
-        float idleTime, float walkTime, float walkWeight, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit = null, float hitTime = 0f, float hitWeight = 0f) =>
-        Blend(Idle, idleTime, Walk, walkTime, walkWeight, world, skin, hit, hitTime, hitWeight);
+        float idleTime, float walkTime, float walkWeight, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit = null, float hitTime = 0f, float hitWeight = 0f)
+    {
+        ModernMix mix = new(Idle, idleTime, Walk, walkTime, walkWeight);
+        Blend(mix, mix, 1f, world, skin, hit, hitTime, hitWeight);
+    }
+
+    /// <summary>Poses the skeleton in one mix of a standing and a moving clip, faded in from the mix before it.</summary>
+    /// <param name="now">What he is doing.</param>
+    /// <param name="before">What he was doing.</param>
+    /// <param name="fade">How far from the one before to now, nought to one.</param>
+    /// <param name="world">Each node's world matrix, written.</param>
+    /// <param name="skin">Each joint's skinning matrix, written.</param>
+    /// <param name="hit">A flinch played over the rest, or null.</param>
+    /// <param name="hitTime">Where in the flinch.</param>
+    /// <param name="hitWeight">How much of the flinch.</param>
+    public void Pose(in ModernMix now, in ModernMix before, float fade, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit, float hitTime, float hitWeight) =>
+        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight);
 
     /// <summary>Poses the skeleton in one fall, held on its last frame once it has run.</summary>
     /// <param name="fall">The fall (<see cref="Death"/>).</param>
     /// <param name="time">How long since the soldier died, in seconds.</param>
     /// <param name="world">Each node's world matrix, written.</param>
     /// <param name="skin">Each joint's skinning matrix, written.</param>
-    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin) =>
-        Blend(fall, time, fall, time, 0f, world, skin);
+    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin)
+    {
+        ModernMix mix = new(fall, time, fall, time, 0f);
+        Blend(mix, mix, 1f, world, skin);
+    }
 
     private void Blend(
-        ModernClip first,
-        float firstTime,
-        ModernClip second,
-        float secondTime,
-        float weight,
+        in ModernMix now,
+        in ModernMix before,
+        float fade,
         Matrix4x4[] world,
         Matrix4x4[] skin,
         ModernClip? over = null,
@@ -194,21 +229,13 @@ internal sealed class ModernBodyAsset : IDisposable
     {
         for (int node = 0; node < Rest.Length; node++)
         {
-            (Vector3 T, Quaternion R, Vector3 S) a = first.Sample(node, firstTime, Rest[node]);
-            (Vector3 T, Quaternion R, Vector3 S) b = weight > 0f ? second.Sample(node, secondTime, Rest[node]) : a;
-            Vector3 t = Vector3.Lerp(a.T, b.T, weight);
-            Quaternion r = Quaternion.Slerp(a.R, b.R, weight);
-            Vector3 s = Vector3.Lerp(a.S, b.S, weight);
-
-            // A clip's travel comes off its root, along the ground: the soldier's own move carries the body.
-            if (node == first.TravelNode)
+            (Vector3 t, Quaternion r, Vector3 s) = Mix(now, node);
+            if (fade < 1f)
             {
-                t -= first.TravelAt(firstTime) * (1f - weight);
-            }
-
-            if (node == second.TravelNode && weight > 0f)
-            {
-                t -= second.TravelAt(secondTime) * weight;
+                (Vector3 T, Quaternion R, Vector3 S) was = Mix(before, node);
+                t = Vector3.Lerp(was.T, t, fade);
+                r = Quaternion.Slerp(was.R, r, fade);
+                s = Vector3.Lerp(was.S, s, fade);
             }
 
             // A flinch over whatever he is doing, its own slide taken out like a fall's.
@@ -236,7 +263,7 @@ internal sealed class ModernBodyAsset : IDisposable
     }
 
     /// <summary>Skins the mesh into the soldier's frame, its lowest point at the height given.</summary>
-    /// <param name="skin">The joints' skinning matrices (<see cref="Pose"/>).</param>
+    /// <param name="skin">The joints' skinning matrices (<see cref="Blend"/>).</param>
     /// <param name="yaw">The extra turn about up (<see cref="ToBody"/>).</param>
     /// <param name="lift">How far to raise every point, in metres, along the soldier's up.</param>
     /// <param name="into">The vertices, written.</param>
@@ -271,7 +298,7 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <inheritdoc/>
     public void Dispose()
     {
-        foreach ((_, _, TextureHandle diffuse) in Subsets)
+        foreach ((_, _, TextureHandle diffuse, _) in Subsets)
         {
             if (diffuse.IsValid)
             {
@@ -285,6 +312,27 @@ internal sealed class ModernBodyAsset : IDisposable
     private static GltfAnimation Find(ModelRoot model, string name, string path) =>
         model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
         ?? throw new InvalidDataException($"{path} holds no clip named '{name}'.");
+
+    // One node in a mix of a standing and a moving clip, each clip's travel taken off its root along the ground: the soldier's own
+    // move carries the body.
+    private (Vector3 T, Quaternion R, Vector3 S) Mix(in ModernMix mix, int node)
+    {
+        float weight = mix.MoveWeight;
+        (Vector3 T, Quaternion R, Vector3 S) a = mix.Stand.Sample(node, mix.StandTime, Rest[node]);
+        (Vector3 T, Quaternion R, Vector3 S) b = weight > 0f ? mix.Move.Sample(node, mix.MoveTime, Rest[node]) : a;
+        Vector3 t = Vector3.Lerp(a.T, b.T, weight);
+        if (node == mix.Stand.TravelNode)
+        {
+            t -= mix.Stand.TravelAt(mix.StandTime) * (1f - weight);
+        }
+
+        if (node == mix.Move.TravelNode && weight > 0f)
+        {
+            t -= mix.Move.TravelAt(mix.MoveTime) * weight;
+        }
+
+        return (t, Quaternion.Slerp(a.R, b.R, weight), Vector3.Lerp(a.S, b.S, weight));
+    }
 
     // The up direction in a node's parent's frame, at rest: what a fall's slide along the ground is measured against.
     private Vector3 UpOf(int node)
@@ -329,7 +377,7 @@ internal sealed class ModernBodyAsset : IDisposable
         List<(Vector3, Vector3, Vector2)> vertices = [];
         List<(Vector4, Vector4)> skin = [];
         List<ushort> indices = [];
-        List<(int, int, TextureHandle)> subsets = [];
+        List<(int, int, TextureHandle, bool)> subsets = [];
         Dictionary<SharpGLTF.Schema2.Image, TextureHandle> uploaded = [];
 
         foreach (MeshPrimitive primitive in mesh.Primitives)
@@ -364,7 +412,8 @@ internal sealed class ModernBodyAsset : IDisposable
                 }
             }
 
-            subsets.Add((offset, indices.Count - offset, diffuse));
+            bool gun = primitive.Material?.Name?.StartsWith("Rifle_", StringComparison.Ordinal) ?? false;
+            subsets.Add((offset, indices.Count - offset, diffuse, gun));
         }
 
         Vertices = [.. vertices];
@@ -397,6 +446,14 @@ internal sealed class ModernBodyAsset : IDisposable
     }
 }
 
+/// <summary>A standing clip and a moving one, where each is, and how much of the moving one.</summary>
+/// <param name="Stand">The standing clip.</param>
+/// <param name="StandTime">Where in it, in seconds.</param>
+/// <param name="Move">The moving clip.</param>
+/// <param name="MoveTime">Where in it, in seconds.</param>
+/// <param name="MoveWeight">How much of it, nought to one.</param>
+internal readonly record struct ModernMix(ModernClip Stand, float StandTime, ModernClip Move, float MoveTime, float MoveWeight);
+
 /// <summary>One clip of a <see cref="ModernBodyAsset"/>: a translation, rotation and scale curve for each node it moves.</summary>
 internal sealed class ModernClip
 {
@@ -409,6 +466,9 @@ internal sealed class ModernClip
     private Vector3 _travel;
     private Vector3 _up;
     private bool _falls;
+
+    /// <summary>Gets how fast a moving clip covers ground, in metres a second, as the character's skeleton scales it.</summary>
+    public float MetresPerSecond { get; internal set; }
 
     /// <summary>Gets how long the clip runs, in seconds.</summary>
     public float Duration { get; private init; }
