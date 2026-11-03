@@ -58,6 +58,12 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the lowest point of the bind pose, along glTF's up, which the soldier's lowest point is matched to.</summary>
     public float LowestY { get; private set; }
 
+    /// <summary>Gets the right hand's node, which a gun is held in, or -1.</summary>
+    public int RightHand => Array.IndexOf(Names, "mixamorig:RightHand");
+
+    /// <summary>Gets the left hand's node, or -1.</summary>
+    public int LeftHand => Array.IndexOf(Names, "mixamorig:LeftHand");
+
     /// <summary>Gets the standing clip.</summary>
     public ModernClip Idle { get; private set; } = ModernClip.None;
 

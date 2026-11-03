@@ -1,5 +1,6 @@
 using System.Numerics;
 using OpenIGI.Core.Graphics;
+using OpenIGI.Core.Numerics;
 using OpenIGI.Rendering;
 
 namespace OpenIGI.Presentation.Igi1;
@@ -35,6 +36,8 @@ internal sealed class ModernBody : IDisposable
     private float _fallRaise = float.NaN;
     private float _floor;
     private ModernClip? _hit;
+    private float _yaw;
+    private float _lift;
     private float _hitTime;
 
     /// <summary>Initializes a new instance of the <see cref="ModernBody"/> class, its mesh in the bind pose.</summary>
@@ -50,6 +53,46 @@ internal sealed class ModernBody : IDisposable
         asset.Pose(0f, 0f, 0f, _world, _skin);
         asset.Skin(_skin, 0f, 0f, _vertices);
         Mesh = device.CreateAnimatedMesh(_vertices, asset.Indices);
+        ReadHands(0f, 0f);
+        Reference = (Grip.Position, Hand(asset.LeftHand, 0f, 0f), Grip.Rotation);
+    }
+
+    /// <summary>Gets where the right hand is and how it is turned, in the soldier's frame, metres, as last posed; the gun rides it.</summary>
+    public (Vector3 Position, Matrix3f Rotation) Grip { get; private set; }
+
+    /// <summary>Gets both hands and the right one's turn in the idle's first frame, which a gun is fitted to (<see cref="FitGun"/>).</summary>
+    public (Vector3 Right, Vector3 Left, Matrix3f Rotation) Reference { get; }
+
+    /// <summary>Gets where the left hand is, in the soldier's frame, metres, as last posed.</summary>
+    public Vector3 Left => Hand(_asset.LeftHand, _yaw, _lift);
+
+    /// <summary>Gets how the last gun was fitted (<see cref="FitGun"/>): the model's forward and up in the gun's frame, and the axes taken.</summary>
+    public string LastFit { get; private set; } = string.Empty;
+
+    /// <summary>Gets a value indicating whether the character has hands to hold a gun in.</summary>
+    public bool HasHands => _asset.RightHand >= 0 && _asset.LeftHand >= 0;
+
+    /// <summary>
+    /// Works out how a gun sits in the right hand, from how the soldier's own model holds it: its barrel along from the right hand
+    /// to the left in the idle, its top up. The gun's own barrel and top are its axes nearest the model's forward and up.
+    /// </summary>
+    /// <param name="modelHand">The soldier's own model's gun hand, which the gun is drawn turned by, in the soldier's frame.</param>
+    /// <returns>The turn from the right hand to the gun, to be put after <see cref="Grip"/>'s.</returns>
+    public Matrix3f FitGun(Matrix3f modelHand)
+    {
+        // Matrix3f is M . v here, as the drawer applies it: a column is where a local axis goes.
+        Vector3 barrelLocal = Snap(Times(modelHand.Transposed(), Vector3.UnitY), Vector3.Zero);
+        Vector3 topLocal = Snap(Times(modelHand.Transposed(), Vector3.UnitZ), barrelLocal);
+        Vector3 sideLocal = Vector3.Cross(barrelLocal, topLocal);
+        LastFit = FormattableString.Invariant(
+            $"{Times(modelHand.Transposed(), Vector3.UnitY):0.00} -> {barrelLocal}, top {Times(modelHand.Transposed(), Vector3.UnitZ):0.00} -> {topLocal}");
+
+        Vector3 barrel = Vector3.Normalize(Reference.Left - Reference.Right);
+        Vector3 top = Vector3.Normalize(Vector3.UnitZ - (Vector3.Dot(Vector3.UnitZ, barrel) * barrel));
+        Vector3 side = Vector3.Cross(barrel, top);
+
+        Matrix3f gun = Columns(barrel, top, side) * Columns(barrelLocal, topLocal, sideLocal).Transposed();
+        return Reference.Rotation.Transposed() * gun;
     }
 
     /// <summary>Gets the mesh the body is drawn from.</summary>
@@ -141,6 +184,7 @@ internal sealed class ModernBody : IDisposable
 
         _asset.Pose(_idleTime, _walkTime, Smooth(_walkWeight), _world, _skin, _hit, _hitTime, hitWeight);
         _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
+        ReadHands(yaw, (Lift ?? 0f) + raise);
         _device.UpdateAnimatedMesh(Mesh, _vertices);
     }
 
@@ -187,6 +231,51 @@ internal sealed class ModernBody : IDisposable
             _device.DestroyMesh(Mesh);
             Mesh = default;
         }
+    }
+
+    private static Vector3 Times(Matrix3f m, Vector3 v) =>
+        new((m.M11 * v.X) + (m.M12 * v.Y) + (m.M13 * v.Z), (m.M21 * v.X) + (m.M22 * v.Y) + (m.M23 * v.Z), (m.M31 * v.X) + (m.M32 * v.Y) + (m.M33 * v.Z));
+
+    private static Matrix3f Columns(Vector3 a, Vector3 b, Vector3 c) => new(a.X, b.X, c.X, a.Y, b.Y, c.Y, a.Z, b.Z, c.Z);
+
+    // The unit axis, signed, nearest a direction, leaving out one already taken.
+    private static Vector3 Snap(Vector3 v, Vector3 taken)
+    {
+        Vector3[] axes = [Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ];
+        Vector3 best = Vector3.UnitX;
+        float most = -1f;
+        foreach (Vector3 axis in axes)
+        {
+            float along = Vector3.Dot(v, axis);
+            if (Math.Abs(Vector3.Dot(axis, taken)) < 0.5f && Math.Abs(along) > most)
+            {
+                most = Math.Abs(along);
+                best = along < 0f ? -axis : axis;
+            }
+        }
+
+        return best;
+    }
+
+    // A node's place in the soldier's frame, metres.
+    private Vector3 Hand(int node, float yaw, float lift) =>
+        node < 0 ? Vector3.Zero : ModernBodyAsset.ToBody(_world[node].Translation, yaw) + new Vector3(0f, 0f, lift);
+
+    // The right hand as posed: its place, and its axes carried into the soldier's frame.
+    private void ReadHands(float yaw, float lift)
+    {
+        int node = _asset.RightHand;
+        if (node < 0)
+        {
+            return;
+        }
+
+        Matrix4x4 m = _world[node];
+        Vector3 x = Vector3.Normalize(ModernBodyAsset.ToBody(new Vector3(m.M11, m.M12, m.M13), yaw));
+        Vector3 y = Vector3.Normalize(ModernBodyAsset.ToBody(new Vector3(m.M21, m.M22, m.M23), yaw));
+        Vector3 z = Vector3.Normalize(ModernBodyAsset.ToBody(new Vector3(m.M31, m.M32, m.M33), yaw));
+        Grip = (Hand(node, yaw, lift), Columns(x, y, z));
+        (_yaw, _lift) = (yaw, lift);
     }
 
     // Eased, so the change of gait starts and ends gently.

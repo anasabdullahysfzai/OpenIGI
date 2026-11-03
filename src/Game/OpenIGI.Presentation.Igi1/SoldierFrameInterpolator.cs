@@ -182,6 +182,22 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
                     hand = armed.AttachmentPosition;
                     rotation = armed.AttachmentRotation;
                 }
+                else if (member.Modern is { Fallen: false, HasHands: true } modern)
+                {
+                    // The modern body's own right hand (g_modern_bodies), the gun turned in it as the model held it.
+                    if (member.ModernGunFit is null)
+                    {
+                        member.ModernGunFit = modern.FitGun(rotation);
+                        _logger.Information(
+                            SoldierRenderer.LogCategory + ".ModernGun",
+                            $"soldier {member.Agent.View.Soldier.Id}: model hand {rotation}; barrel from his model's forward {modern.LastFit}");
+                    }
+
+                    (System.Numerics.Vector3 at, Matrix3f turn) = modern.Grip;
+                    float units = (float)WorldScene.UnitsPerMetre;
+                    hand = new Vector3f(at.X * units, at.Y * units, at.Z * units);
+                    rotation = turn * member.ModernGunFit.Value;
+                }
                 member.PrevTickHandPosition = member.HasHandState ? member.TickHandPosition : hand;
                 member.PrevTickHandRotation = member.HasHandState ? member.TickHandRotation : rotation;
                 member.TickHandPosition = hand;

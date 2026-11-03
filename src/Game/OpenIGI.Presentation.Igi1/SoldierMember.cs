@@ -42,6 +42,9 @@ internal sealed class SoldierMember(SoldierAgent agent, MeshHandle mesh)
     /// <summary>Gets or sets the modern character drawn in this soldier's place, or <see langword="null"/> for his own model.</summary>
     public ModernBody? Modern { get; set; }
 
+    /// <summary>Gets or sets the turn from the modern body's right hand to the gun (<see cref="ModernBody.FitGun"/>), once fitted.</summary>
+    public Matrix3f? ModernGunFit { get; set; }
+
     /// <summary>What this soldier holds, or <see langword="null"/> when the level armed it with nothing.</summary>
     public SoldierHeldWeapon? Weapon { get; set; }
 
