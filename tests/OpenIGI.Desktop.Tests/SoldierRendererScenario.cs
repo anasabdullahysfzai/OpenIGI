@@ -55,7 +55,7 @@ internal sealed class SoldierRendererScenario(
     /// <param name="prepareContainers">Whether to prepare the level's containers, terrain, collision, graphs and weapons too.</param>
     /// <param name="missionNumber">The mission.</param>
     /// <returns>The scenario; the caller disposes it.</returns>
-    internal static SoldierRendererScenario CreateScenario(bool prepareContainers = false, int missionNumber = 4)
+    internal static SoldierRendererScenario CreateScenario(bool prepareContainers = false, int missionNumber = 4, bool combatRows = false)
     {
         VirtualFileSystem fileSystem = new();
         fileSystem.RegisterDevice(new LocalFileDevice(GameData.RequireRoot()));
@@ -105,12 +105,21 @@ internal sealed class SoldierRendererScenario(
             Path.Combine(GameData.RequireRoot(), "missions", "location0", $"level{missionNumber}", "graphs"),
             root,
             NullLogger.Instance);
+        // The AI settings table, when asked for: without it every soldier fights with the guard arm, whatever its type.
+        HumanAiConfigRegistry? config = null;
+        if (combatRows)
+        {
+            config = new HumanAiConfigRegistry();
+            config.Load(resources, loop.Natives, loop.Tasks);
+        }
+
         Assert.True(renderer.Simulation.Animate(
             graphs,
             solids.Tracer(),
             resources,
             loop.Natives,
             root,
+            config: config,
             variables: loop.Variables) > 0);
         WeaponTypeRegistry weapons = new();
         weapons.Register(loop.Natives);

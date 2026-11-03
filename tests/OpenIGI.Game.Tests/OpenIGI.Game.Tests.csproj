@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The arena (ModernArena) builds its own nav graph with the format tests' writer. -->
+    <Compile Include="..\OpenIGI.Formats.Tests\GraphStreamWriter.cs" Link="Arena\GraphStreamWriter.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures" />
   </ItemGroup>
 

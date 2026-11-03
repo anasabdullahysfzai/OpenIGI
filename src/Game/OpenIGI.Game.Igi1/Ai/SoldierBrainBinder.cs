@@ -108,6 +108,7 @@ internal sealed class SoldierBrainBinder(SoldierContext context, SoldierSightQue
         // One occupancy registry per level -- the global claim list at 0x57D768. Every brain shares it,
         // which is what stops a squad's free-position searches all electing the same node.
         AiNodeOccupancy occupancy = new();
+        AiSquad squad = new();
 
         int index = 0;
         int patrolling = 0;
@@ -178,6 +179,7 @@ internal sealed class SoldierBrainBinder(SoldierContext context, SoldierSightQue
                     Interactions is { } interactions ? interactions.FindStationaryGun : null);
                 brain.SetPatrolPaths(paths);
                 brain.SetNodeOccupancy(occupancy);
+                brain.SetSquad(squad);
                 brain.SetGroundQuery(_context.MakeGroundQuery());
                 if (doors is { } levelDoors)
                 {

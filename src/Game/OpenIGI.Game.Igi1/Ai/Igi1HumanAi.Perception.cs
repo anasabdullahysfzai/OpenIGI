@@ -345,6 +345,7 @@ public sealed partial class Igi1HumanAi
 
         LastEventDistance = distance;
         RefreshBelievedTarget(source);
+        NoteShotAt(source);
         return true;
     }
 
@@ -381,6 +382,7 @@ public sealed partial class Igi1HumanAi
 
         LastEventDistance = distance;
         RefreshBelievedTarget(source);
+        NoteShotAt(source);
         return true;
     }
 
@@ -641,6 +643,7 @@ public sealed partial class Igi1HumanAi
 
         LastEventDistance = Vector3d.Distance(Position, attackerPosition);
         RefreshBelievedTarget(attacker);
+        NoteShotAt(attacker);
         return true;
     }
 
@@ -837,6 +840,21 @@ public sealed partial class Igi1HumanAi
         }
     }
 
+    /// <summary>How long a round in him or past him keeps a soldier knowing he is under fire, in ticks (modern AI).</summary>
+    public const int ShotAtTicks = 10 * 30;
+
+    private int _shotAtUntilTick = -1;
+
+    // The modern AI: a round in him or cracking past him, from the player, and he knows he is being shot at -- a silenced
+    // gun's report reaches no one, but its rounds do. Retail only investigates a near miss.
+    private void NoteShotAt(int source)
+    {
+        if (GameplayCVars.ModernAi.Value && source == PlayerSource)
+        {
+            _shotAtUntilTick = _lastTick + ShotAtTicks;
+        }
+    }
+
     /// <summary>
     /// The modern AI's gate: the sweep's verdict fills or drains the soldier's suspicion, and the soldier believes it sees the
     /// human only once that is full -- so everything downstream that reads the visible flag waits on it too.
@@ -859,7 +877,8 @@ public sealed partial class Igi1HumanAi
         // him, searching, or lately searched -- fills as an alerted one does; one making out a man he can see, looking or
         // walking towards him, does not, or the glimpse makes itself sure.
         bool investigating = IsInvestigating || IsSearching;
-        bool lookingForSomeone = IsSearching || IsOnEdge || (IsInvestigating && _hunting);
+        bool shotAt = human.Candidate.IsPlayer && _lastTick < _shotAtUntilTick;
+        bool lookingForSomeone = IsSearching || IsOnEdge || shotAt || (IsInvestigating && _hunting);
         if (human.SeesRaw || !investigating)
         {
             human.Suspicion = AiSuspicion.Step(
@@ -871,6 +890,13 @@ public sealed partial class Igi1HumanAi
                 Alerted || lookingForSomeone,
                 seconds);
         }
+        // Under fire, the man he can see is the one shooting at him; in a fight with him, he knows him on sight. There is
+        // nothing to make out either way.
+        if ((shotAt || (_combatInstalled && human.Candidate.IsPlayer && GameplayCVars.ModernAi.Value)) && human.SeesRaw)
+        {
+            human.Suspicion = 1.0;
+        }
+
         human.Slot.IsVisible = human.SeesRaw && human.Suspicion >= 1.0;
         if (human.Slot.IsVisible && !wasSure && human.Candidate.IsPlayer)
         {

@@ -475,6 +475,7 @@ public sealed partial class Igi1MissionTick(MissionWorld mission, Igi1PlayerHarm
         }
         else
         {
+            AimBot(player);
             player.Tick(host.ViewInput, host.Ground);
 
             // PlayerCamera advances its interaction registry before it resolves this tick's activate target.

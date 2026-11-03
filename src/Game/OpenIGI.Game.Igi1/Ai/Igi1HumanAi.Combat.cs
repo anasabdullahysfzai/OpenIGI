@@ -404,6 +404,7 @@ public sealed partial class Igi1HumanAi
         _patrolKneeling = false;
         _repositionLatched = false;
         _lookForTargetLatched = false;
+        ForgetTactics();
 
         // The node claim outlives the fight: nothing in IGI.exe releases HumanAI+16032 when combat ends --
         // only death (0x44F410), a claiming walk (0x4518E0) or a search that claims elsewhere replaces it.

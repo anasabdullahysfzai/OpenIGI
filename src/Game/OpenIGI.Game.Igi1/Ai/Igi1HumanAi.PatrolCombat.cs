@@ -27,6 +27,13 @@ public sealed partial class Igi1HumanAi
     {
         AiCombatWeaponState weapon = _weapon!();
         TrackTargetNode(LiveTargetNodePoint() ?? LiveTargetFeet(enemy));
+
+        // The modern fight, in place of all that follows (Igi1HumanAi.Tactics).
+        if (FightModern(tick, enemy))
+        {
+            return;
+        }
+
         ChoosePatrolEvasion(tick, enemy);
         if (RunPatrolChild(enemy, weapon) || RunPatrolMovement(enemy) || WaitForPatrolPosture())
         {

@@ -3,7 +3,9 @@ using OpenIGI.Core.Graphics;
 using OpenIGI.Game;
 using OpenIGI.Game.Igi1.Ai;
 using OpenIGI.Game.Igi1.Player;
+using OpenIGI.Game.Player;
 using OpenIGI.Game.World;
+using Vector2 = System.Numerics.Vector2;
 
 namespace OpenIGI.Presentation.Igi1;
 
@@ -25,6 +27,7 @@ public sealed partial class SoldierRenderer
     private readonly Dictionary<SoldierMember, float> _modernRootTops = [];
     private readonly Dictionary<SoldierMember, int> _modernHitsSeen = [];
     private readonly Dictionary<SoldierMember, int> _modernLastHitTick = [];
+    private readonly Dictionary<SoldierMember, (float Facing, bool Reloading, bool Throwing)> _modernLast = [];
 
     // Two rounds within this many ticks make the second a heavy one: a burst staggers where a single round flinches.
     private const int HeavyHitTicks = 18;
@@ -65,12 +68,20 @@ public sealed partial class SoldierRenderer
         }
 
         float raise = 0f;
+        bool kneeling = false, keepsDown = false;
         if (!view.IsDead)
         {
             // A soldier with a brain is drawn at his clip's root height above the ground. His own flinch, kneel or crouch brings
             // that down; the character only stands and walks, so the drop is given back and he stays on his feet. (Measured from
             // the highest his root has stood, which is standing.)
-            if (_sim.Brains.TryGetValue(view, out Igi1HumanAi? brain) && brain.HasGroundQuery)
+            // A kneel the character has a clip for is his own: it brings his hips down, and nothing is given back.
+            if (_sim.Brains.TryGetValue(view, out Igi1HumanAi? brain) && !ReferenceEquals(asset.KneelIdle, ModernClip.None)
+                && brain.CombatState is HumanSoldierStates.CrouchDownState
+                    or (>= HumanSoldierStates.KneelingState and <= HumanSoldierStates.KneelReadyState))
+            {
+                (kneeling, keepsDown) = (true, brain.KeepsDown);
+            }
+            else if (brain is not null && brain.HasGroundQuery)
             {
                 float top = Math.Max(_modernRootTops.GetValueOrDefault(member, view.RootSample.Z), view.RootSample.Z);
                 _modernRootTops[member] = top;
@@ -113,7 +124,50 @@ public sealed partial class SoldierRenderer
         // In a fight his rifle comes up, and his shots fire it.
         bool aiming = _sim.Brains.TryGetValue(view, out Igi1HumanAi? fighter)
             && (fighter.HasCombatRecord || fighter.Activity is AiSoldierActivity.Engaging or AiSoldierActivity.FiringAtTask);
-        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming, member.Agent.ShotSequence);
+
+        // How fast he turns, and the reload or throw he starts: a reload asked for either way (the displayed one, or the
+        // direct one the original plays nothing for), a throw as his body enters it.
+        float turning = 0f;
+        if (fighter is not null && !view.IsDead)
+        {
+            bool reloading = fighter.Combat.PressReload || fighter.Combat.ReloadWeaponDirectly
+                || fighter.CombatState is HumanSoldierStates.DisplayReloadState or HumanSoldierStates.KneelReloadState;
+            bool throwing = fighter.CombatState == HumanSoldierStates.GrenadeThrowState;
+            if (_modernLast.TryGetValue(member, out var last))
+            {
+                float turned = fighter.Facing - last.Facing;
+                turned = MathF.IEEERemainder(turned, 2f * MathF.PI);
+                turning = turned * 30f;
+                if (reloading && !last.Reloading)
+                {
+                    body.Act(kneeling ? asset.KneelReload : asset.Reload);
+                }
+
+                if (throwing && !last.Throwing)
+                {
+                    body.Act(asset.Throw);
+                }
+            }
+
+            _modernLast[member] = (fighter.Facing, reloading, throwing);
+        }
+
+        // Strafing, the way he goes against the way he faces (the brain's forward is -sin, cos of its facing).
+        Vector2 heading = default;
+        if (fighter is { Strafing: true } && moved > 0f)
+        {
+            float f = fighter.Facing;
+            float ahead = (float)((-dx * Math.Sin(f)) + (dy * Math.Cos(f))), right = (float)((dx * Math.Cos(f)) + (dy * Math.Sin(f)));
+            heading = Vector2.Normalize(new Vector2(ahead, right));
+        }
+
+        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming, member.Agent.ShotSequence, kneeling, keepsDown, turning,
+            crouched: fighter?.CrouchMoving ?? false, heading);
+        if (GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
+        {
+            _logger.Information(LogCategory + ".Body", FormattableString.Invariant(
+                $"t{_sim.TickCount} {fighter.CoverState} state {fighter.CombatState} kneel {kneeling}: {body.Showing}"));
+        }
     }
 
     private readonly Dictionary<SoldierMember, string> _modernForcedSeen = [];
@@ -201,9 +255,24 @@ public sealed partial class SoldierRenderer
             "run" => asset.Run.MetresPerSecond * tick,
             _ => 0f,
         };
-        bool aiming = forced is "aim" or "fire" or "aim_walk";
+        // reload, throw: played once each time it is set; turn_left, turn_right: a steady turn of 60 degrees a second.
+        if (fresh && forced is "reload" or "throw")
+        {
+            body.Act(forced == "reload" ? asset.Reload : asset.Throw);
+        }
+
+        float turning = forced switch { "turn_left" => MathF.PI / 3f, "turn_right" => -MathF.PI / 3f, _ => 0f };
+        Vector2 heading = forced switch { "strafe_left" => new(0f, -1f), "strafe_right" => new(0f, 1f), "walk_back" => new(-1f, 0f), _ => default };
+        if (heading != Vector2.Zero || forced == "crouch_walk")
+        {
+            ModernClip clip = forced switch { "strafe_left" => asset.StrafeLeft, "strafe_right" => asset.StrafeRight, "walk_back" => asset.WalkBack, _ => asset.CrouchWalk };
+            body.Tick(clip.MetresPerSecond * tick, yaw, 0f, aiming: true, 0, crouched: forced == "crouch_walk", heading: heading);
+            return;
+        }
+
+        bool aiming = forced is "aim" or "fire" or "aim_walk" or "kneel_aim" or "turn_left" or "turn_right";
         int shots = forced == "fire" ? ++_modernForcedTicks / 10 : 0;
-        body.Tick(moved, yaw, 0f, aiming, shots);
+        body.Tick(moved, yaw, 0f, aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning);
     }
 
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.

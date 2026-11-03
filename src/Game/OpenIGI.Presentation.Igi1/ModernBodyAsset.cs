@@ -116,6 +116,10 @@ internal sealed class ModernBodyAsset : IDisposable
     public (int Shoulder, int Elbow, int Wrist) LeftArm =>
         (Array.IndexOf(Names, "mixamorig:LeftArm"), Array.IndexOf(Names, "mixamorig:LeftForeArm"), Array.IndexOf(Names, "mixamorig:LeftHand"));
 
+    /// <summary>Gets the right arm's shoulder, elbow and wrist nodes.</summary>
+    public (int Shoulder, int Elbow, int Wrist) RightArm =>
+        (Array.IndexOf(Names, "mixamorig:RightArm"), Array.IndexOf(Names, "mixamorig:RightForeArm"), Array.IndexOf(Names, "mixamorig:RightHand"));
+
     /// <summary>Gets a node and every node below it.</summary>
     /// <param name="node">The node.</param>
     /// <returns>The nodes, parents before children.</returns>
@@ -213,6 +217,46 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the run (<c>run</c>; the aimed walk where the file has none).</summary>
     public ModernClip Run { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets the kneel with the rifle lowered, down behind cover (<c>kneel_idle</c>; <see cref="ModernClip.None"/> where the file
+    /// has none, and he is drawn standing as the kneel is given back).</summary>
+    public ModernClip KneelIdle { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the kneel with the rifle up (<c>kneel_aim</c>; the kneel where the file has none).</summary>
+    public ModernClip KneelAim { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the steps of a turn on the spot, rifle up, its turn taken out (<c>turn_left</c>, <c>turn_right</c>; <see cref="ModernClip.None"/>
+    /// where the file has none).</summary>
+    public ModernClip TurnLeft { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="TurnLeft"/>
+    public ModernClip TurnRight { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the moves in a fight: crouched, sideways each way and back, rifle up (<c>crouch_walk</c>, <c>strafe_left</c>,
+    /// <c>strafe_right</c>, <c>walk_back</c>; the aimed walk where the file has none).</summary>
+    public ModernClip CrouchWalk { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="CrouchWalk"/>
+    public ModernClip StrafeLeft { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="CrouchWalk"/>
+    public ModernClip StrafeRight { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="CrouchWalk"/>
+    public ModernClip WalkBack { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the reload, standing and kneeling, and the grenade toss, played once (<c>reload</c>, <c>kneel_reload</c>,
+    /// <c>throw</c>; <see cref="ModernClip.None"/> where the file has none).</summary>
+    public ModernClip Reload { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="Reload"/>
+    public ModernClip KneelReload { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="Reload"/>
+    public ModernClip Throw { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the weapon bone the rifle is skinned to, its motion baked into every clip by the build; -1 where there is none.</summary>
+    public int Weapon => Array.IndexOf(Names, "weapon");
+
     /// <summary>Gets the falls, by shot from behind then headshot, each null where the file has none.</summary>
     /// <remarks>Named <c>death_front</c>, <c>death_back</c>, <c>death_front_head</c> and <c>death_back_head</c>; played once and held.</remarks>
     public ModernClip?[,] Deaths { get; private set; } = new ModernClip?[2, 2];
@@ -261,7 +305,8 @@ internal sealed class ModernBodyAsset : IDisposable
     {
         for (int at = node; at >= 0; at = Parents[at])
         {
-            if (Names[at] is "mixamorig:LeftShoulder" or "mixamorig:RightShoulder")
+            // The weapon bone too: a layered reaction leaves the rifle to the clip, as it leaves the arms that hold it.
+            if (Names[at] is "mixamorig:LeftShoulder" or "mixamorig:RightShoulder" or "weapon")
             {
                 return true;
             }
@@ -316,7 +361,18 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.Fire = Optional("fire", travelling: false, asset.AimIdle);
         asset.AimWalk = Optional("aim_walk", travelling: true, asset.Walk);
         asset.Run = Optional("run", travelling: true, asset.AimWalk);
-        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run })
+        asset.KneelIdle = Optional("kneel_idle", travelling: false, ModernClip.None);
+        asset.KneelAim = Optional("kneel_aim", travelling: false, asset.KneelIdle);
+        asset.TurnLeft = Optional("turn_left", travelling: false, ModernClip.None);
+        asset.TurnRight = Optional("turn_right", travelling: false, ModernClip.None);
+        asset.Reload = Optional("reload", travelling: false, ModernClip.None);
+        asset.KneelReload = Optional("kneel_reload", travelling: false, asset.Reload);
+        asset.Throw = Optional("throw", travelling: false, ModernClip.None);
+        asset.CrouchWalk = Optional("crouch_walk", travelling: true, asset.AimWalk);
+        asset.StrafeLeft = Optional("strafe_left", travelling: true, asset.AimWalk);
+        asset.StrafeRight = Optional("strafe_right", travelling: true, asset.AimWalk);
+        asset.WalkBack = Optional("walk_back", travelling: true, asset.AimWalk);
+        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run, asset.CrouchWalk, asset.StrafeLeft, asset.StrafeRight, asset.WalkBack }.Distinct())
         {
             moving.MetresPerSecond = ModernBody.WalkSpeed(asset, moving);
         }

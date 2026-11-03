@@ -153,6 +153,9 @@ public sealed partial class Igi1HumanAi
         StepBody();
     }
 
+    // This tick's crouched or strafed step, set by the modern fight: the stride's scale, and whether it goes along the way.
+    private (double Scale, bool Along)? _stepStyle;
+
     private void StepBody()
     {
         float turn = _turnInput;
@@ -175,6 +178,24 @@ public sealed partial class Igi1HumanAi
         // for: the walk moves a walker, a roll carries a rolling soldier sideways, a step back steps back.
         Vector3d world = SoldierDeathFall.RotateAboutZ(
             new Vector3d(_rootLateralThisTick, _rootMotionThisTick, 0.0), Facing + RecoilYaw);
+
+        // The modern fight's crouched or strafed step (Igi1HumanAi.Tactics): the run's stride scaled down and, strafing, laid
+        // along the way to the next waypoint whatever way he faces, never past it.
+        if (_stepStyle is (double scale, bool along))
+        {
+            _stepStyle = null;
+            double length = Math.Sqrt((world.X * world.X) + (world.Y * world.Y)) * scale;
+            if (along && _route.Count > 0)
+            {
+                Vector3d to = _route[0].Point - Position;
+                double left = Math.Sqrt((to.X * to.X) + (to.Y * to.Y));
+                world = left > 1.0 ? new Vector3d(to.X / left, to.Y / left, 0.0) * Math.Min(length, left) : default;
+            }
+            else
+            {
+                world *= scale;
+            }
+        }
         double x = Position.X + world.X;
         double y = Position.Y + world.Y;
         if (world.X != 0.0 || world.Y != 0.0)

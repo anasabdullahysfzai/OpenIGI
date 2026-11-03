@@ -19,7 +19,7 @@ public sealed partial class GameHost
     // The animation viewer's list (dev_pose_next): every clip of a modern body, at ease, in a fight, struck and falling.
     private static readonly string[] ViewerPoses =
     [
-        "idle", "walk", "aim", "fire", "aim_walk", "run",
+        "idle", "walk", "aim", "fire", "aim_walk", "run", "kneel", "kneel_aim", "turn_left", "turn_right", "reload", "throw", "crouch_walk", "strafe_left", "strafe_right", "walk_back",
         "react_15_front", "react_15_back", "react_13_front", "react_13_front_heavy", "react_14_back", "react_14_back_heavy",
         "react_13_left", "react_13_left_heavy", "react_13_right", "react_13_right_heavy",
         "react_5_front", "react_11_front", "react_2_front", "react_8_front",
@@ -77,6 +77,44 @@ public sealed partial class GameHost
                 _camera = new FreeCamera(eye, yaw, pitch);
                 _playerMode = false;
                 context.Print(FormattableString.Invariant($"dev_look: soldier {id} from {degrees:0} degrees, {distance:0.0} m."));
+            });
+
+        console.Commands.Add(
+            "dev_stand_near",
+            "dev_stand_near <soldier id> [degrees round from his front] [metres away]: stands the player there, facing him.",
+            context =>
+            {
+                string[] args = context.Arguments.ToArray();
+                if (args.Length < 1 || !int.TryParse(args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int id))
+                {
+                    context.Print("dev_stand_near <soldier id> [degrees] [metres]");
+                    return;
+                }
+
+                float Arg(int i, float otherwise) =>
+                    args.Length > i && float.TryParse(args[i], NumberStyles.Float, CultureInfo.InvariantCulture, out float value) ? value : otherwise;
+                List<SoldierSnapshot> soldiers = [];
+                _soldiers?.Snapshot(soldiers);
+                if (soldiers.FirstOrDefault(s => s.Id == id) is not { Name: not null } soldier || soldier.Id != id
+                    || HostedPlayer is not { } player)
+                {
+                    context.Print($"dev_stand_near: no soldier {id}, or no player.");
+                    return;
+                }
+
+                double turn = Arg(1, 0f) * Math.PI / 180.0;
+                Vector3d f = soldier.Forward;
+                Vector3d along = new((f.X * Math.Cos(turn)) - (f.Y * Math.Sin(turn)), (f.X * Math.Sin(turn)) + (f.Y * Math.Cos(turn)), 0.0);
+                Vector3d at = soldier.Position + (along * Arg(2, 12f));
+                Vector3d look = soldier.Position - at;
+                if (!player.Place(_mission.Ground, at, (float)Math.Atan2(look.X, look.Y)))
+                {
+                    context.Print("dev_stand_near: could not stand the player there.");
+                    return;
+                }
+
+                _playerMode = true;
+                context.Print(FormattableString.Invariant($"dev_stand_near: {Arg(2, 12f):0.0} m from soldier {id}."));
             });
 
         console.Commands.Add(

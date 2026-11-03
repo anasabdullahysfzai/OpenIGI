@@ -22,7 +22,7 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         RecordingGraphicsDevice device = new();
         using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
 
-        Assert.Equal(65, asset.Joints.Length);
+        Assert.Equal(66, asset.Joints.Length); // the Mixamo skeleton and the weapon bone (weapon_bake.py)
         Assert.InRange(asset.Vertices.Length, 1000, ushort.MaxValue);
         Assert.Equal(3, asset.Subsets.Length);
         Assert.Single(asset.Subsets, subset => subset.Gun);

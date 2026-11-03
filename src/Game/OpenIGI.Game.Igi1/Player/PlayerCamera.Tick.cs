@@ -31,7 +31,13 @@ public sealed partial class PlayerCamera
     public void Tick(InputState input, IGroundHeightField? terrain)
     {
         ArgumentNullException.ThrowIfNull(input);
-        TickFrame(PlayerInputSampler.SampleFrame(input, InputProfile), terrain);
+        PlayerInputFrame frame = PlayerInputSampler.SampleFrame(input, InputProfile);
+        if (GameplayCVars.BotFire.Value)
+        {
+            frame[(int)PlayerInputSlot.Fire] = 1f;
+        }
+
+        TickFrame(frame, terrain);
     }
 
     /// <summary>Advances the body by one simulation tick on a frame of input already sampled.</summary>

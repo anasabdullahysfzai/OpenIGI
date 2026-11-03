@@ -67,82 +67,14 @@ internal sealed class ModernBody : IDisposable
         _vertices = new Vertex3D[asset.Vertices.Length];
         asset.Pose(0f, 0f, 0f, _world, _skin);
         asset.Skin(_skin, 0f, 0f, _vertices);
-        HoldRifle(calibrate: true, HandFrame(0f, 0f));
+        // Where each hand holds the rifle, in the weapon bone's frame, as the idle the rifle was fitted in holds it.
+        if (_asset.Weapon >= 0 && _asset.LeftArm.Wrist >= 0 && _asset.RightArm.Wrist >= 0)
+        {
+            Matrix4x4.Invert(_world[_asset.Weapon], out Matrix4x4 into);
+            _leftGrip = Vector3.Transform(_world[_asset.LeftArm.Wrist].Translation, into);
+            _rightGrip = Vector3.Transform(_world[_asset.RightArm.Wrist].Translation, into);
+        }
         Mesh = device.CreateAnimatedMesh(_vertices, asset.Indices);
-    }
-
-    /// <summary>How far the rifle is raised, and drawn back into the shoulder, while he aims, in metres: the clips hold the hands
-    /// a little low and forward for the rifle's sights to come to the eye and its stock to the shoulder.</summary>
-    public const float AimRaise = 0.04f, AimSeat = 0.025f;
-
-    // How far into his aim the rifle is, nought to one, eased as the clips are.
-    private float _aimHold;
-
-    // The rifle in the idle's first frame, where it was fitted, in the frame its two hands make (see HandFrame).
-    private (Vector3 Position, Vector3 Normal)[] _gunInHands = [];
-
-    /// <summary>
-    /// Places the rifle between the hands: its grip in the right palm and its barrel running out through the left, top up, as it
-    /// lay between them in the idle it was fitted in. Skinned to the right hand alone, it took that hand's every turn, and a
-    /// clip from another set -- the aim, the walk with the rifle up -- holds its hand differently, so the rifle came out across
-    /// the body with the left hand on nothing.
-    /// </summary>
-    private void HoldRifle(bool calibrate, Matrix4x4? hands)
-    {
-        int[] gun = _asset.GunVertices;
-        if (gun.Length == 0 || hands is not { } frame)
-        {
-            return;
-        }
-
-        if (calibrate)
-        {
-            Matrix4x4.Invert(frame, out Matrix4x4 into);
-            _gunInHands = [.. gun.Select(i => (
-                Vector3.Transform(Vec(_vertices[i].Position), into),
-                Vector3.Normalize(Vector3.TransformNormal(Vec(_vertices[i].Normal), into))))];
-            return;
-        }
-
-        // Aiming, up and back (AimShift), the left hand reached after it (ReachLeftHand).
-        frame.Translation += AimShift(frame);
-
-        for (int k = 0; k < gun.Length; k++)
-        {
-            Vertex3D old = _vertices[gun[k]];
-            Vector3 at = Vector3.Transform(_gunInHands[k].Position, frame);
-            Vector3 facing = Vector3.Normalize(Vector3.TransformNormal(_gunInHands[k].Normal, frame));
-            _vertices[gun[k]] = new Vertex3D(
-                new Vector3f(at.X, at.Y, at.Z), new Vector3f(facing.X, facing.Y, facing.Z), old.DiffuseU, old.DiffuseV, colour: _asset.Tone);
-        }
-    }
-
-    // The hands' frame, in the soldier's: at the right palm, along to the left palm, its third axis up as far as that allows.
-    private Matrix4x4? HandFrame(float yaw, float lift)
-    {
-        Vector3 Palm((int Wrist, int Knuckle) palm) =>
-            (Hand(palm.Wrist, yaw, lift) + Hand(palm.Knuckle, yaw, lift)) / 2f;
-        if (_asset.RightPalm.Wrist < 0 || _asset.LeftPalm.Wrist < 0)
-        {
-            return null;
-        }
-
-        Vector3 right = Palm(_asset.RightPalm), left = Palm(_asset.LeftPalm);
-        Vector3 along = left - right;
-        if (along.LengthSquared() < 0.0025f)
-        {
-            return null;
-        }
-
-        along = Vector3.Normalize(along);
-        Vector3 up = Vector3.UnitZ - (along * Vector3.Dot(along, Vector3.UnitZ));
-        up = up.LengthSquared() < 1e-6f ? Vector3.UnitY : Vector3.Normalize(up);
-        Vector3 side = Vector3.Cross(up, along);
-        return new Matrix4x4(
-            along.X, along.Y, along.Z, 0f,
-            side.X, side.Y, side.Z, 0f,
-            up.X, up.Y, up.Z, 0f,
-            right.X, right.Y, right.Z, 1f);
     }
 
     /// <summary>Gets both palms in the soldier's frame as last posed, for testing.</summary>
@@ -150,33 +82,19 @@ internal sealed class ModernBody : IDisposable
         ((Hand(_asset.RightPalm.Wrist, 0f, 0f) + Hand(_asset.RightPalm.Knuckle, 0f, 0f)) / 2f,
          (Hand(_asset.LeftPalm.Wrist, 0f, 0f) + Hand(_asset.LeftPalm.Knuckle, 0f, 0f)) / 2f);
 
-    // How far the rifle moves from where the hands' frame puts it while he aims, in the soldier's frame.
-    private Vector3 AimShift(Matrix4x4 frame)
-    {
-        if (_aimHold <= 0f)
-        {
-            return Vector3.Zero;
-        }
-
-        float hold = Smooth(_aimHold);
-        Vector3 along = new(frame.M11, frame.M12, frame.M13), up = new(frame.M31, frame.M32, frame.M33);
-        return (up * (AimRaise * hold)) - (along * (AimSeat * hold));
-    }
-
     /// <summary>
-    /// Moves the left hand by a shift, in glTF's world, bending the elbow and turning the arm at the shoulder: the two-bone reach
-    /// that keeps it on the rifle's handguard when the rifle is moved from where the clip holds it.
+    /// Brings a wrist to a point, in glTF's world, bending the elbow and turning the arm at the shoulder: the two-bone reach
+    /// that keeps the hand on the rifle's handguard where a clip from another set, a flinch or a kick, has it off it.
     /// </summary>
-    private void ReachLeftHand(Vector3 shift)
+    private void ReachHand((int Shoulder, int Elbow, int Wrist) arm, Vector3 target)
     {
-        (int shoulder, int elbow, int wrist) = _asset.LeftArm;
+        (int shoulder, int elbow, int wrist) = arm;
         if (shoulder < 0 || elbow < 0 || wrist < 0)
         {
             return;
         }
 
         Vector3 a = _world[shoulder].Translation, b = _world[elbow].Translation, c = _world[wrist].Translation;
-        Vector3 target = c + shift;
         float upper = Vector3.Distance(a, b), lower = Vector3.Distance(b, c);
         float reach = Math.Clamp(Vector3.Distance(a, target), Math.Abs(upper - lower) + 1e-4f, upper + lower - 1e-4f);
 
@@ -339,7 +257,13 @@ internal sealed class ModernBody : IDisposable
     /// <param name="raise">How far to raise the body, in metres: what the soldier's own clip has lowered where he is drawn.</param>
     /// <param name="aiming">Whether he is in a fight, with his rifle up.</param>
     /// <param name="shots">How many shots he has fired, which a firing clip follows.</param>
-    public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0)
+    /// <param name="kneeling">Whether he kneels: down out of sight, or with his rifle up when he is also aiming.</param>
+    /// <param name="keepsDown">Whether he kneels to hide, his rifle lowered whatever the fight.</param>
+    /// <param name="turning">How fast he turns about up, in radians a second, left positive.</param>
+    /// <param name="crouched">Whether he moves crouched.</param>
+    /// <param name="heading">Which way he moves against the way he faces, forward and right, when he moves facing elsewhere (strafing); zero otherwise.</param>
+    public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0, bool kneeling = false, bool keepsDown = false, float turning = 0f,
+        bool crouched = false, Vector2 heading = default)
     {
         if (_fall is { } fall)
         {
@@ -367,7 +291,9 @@ internal sealed class ModernBody : IDisposable
 
         Speed = moved / TickSeconds;
         bool moving = Speed >= StandingBelow;
-        float step = TickSeconds / BlendSeconds;
+        // His legs come in as fast as he does: the soldier is at full speed the tick he sets off, and a quarter second of
+        // legs fading in under him at a run is a quarter second of gliding.
+        float step = TickSeconds / (moving && Speed > 1f ? BlendSeconds / 4f : BlendSeconds);
         _moveWeight = Math.Clamp(_moveWeight + (moving ? step : -step), 0f, 1f);
 
         // What he does: a fight brings the rifle up, a shot fires it, and fast enough is a run.
@@ -379,8 +305,46 @@ internal sealed class ModernBody : IDisposable
 
         _firingFor = Math.Max(0f, _firingFor - TickSeconds);
         _running = moving && (_running ? Speed > RunBelow : Speed > RunAbove);
-        ModernClip stand = _firingFor > 0f ? _asset.Fire : aiming ? _asset.AimIdle : _asset.Idle;
-        ModernClip move = _running ? _asset.Run : aiming ? _asset.AimWalk : _asset.Walk;
+        ModernClip stand = kneeling ? (!keepsDown && (aiming || _firingFor > 0f) ? _asset.KneelAim : _asset.KneelIdle)
+            : _firingFor > 0f ? _asset.Fire : aiming ? _asset.AimIdle : _asset.Idle;
+
+        // A reload or a throw over whatever he stands in, played once; set off moving, he leaves it.
+        if (_act is { } act)
+        {
+            _actTime += TickSeconds;
+            if (_actTime >= act.Duration || (moving && !kneeling))
+            {
+                _act = null;
+            }
+            else
+            {
+                stand = act;
+            }
+        }
+
+        // Turning where he stands: the turn's steps, at the pace he turns (the clip turns 45 degrees in its length).
+        // A turn once started is stepped a third of a second at least: a turn rate over the line for a tick or two flickered
+        // the steps in and out.
+        bool canTurn = _act is null && !kneeling && !moving && !ReferenceEquals(_asset.TurnLeft, ModernClip.None);
+        if (canTurn && Math.Abs(turning) > TurnAboveRadiansPerSecond)
+        {
+            (_turnFor, _turnLeft) = (TurnHoldSeconds, turning > 0f);
+        }
+
+        _turnFor = canTurn ? Math.Max(0f, _turnFor - TickSeconds) : 0f;
+        if (_turnFor > 0f)
+        {
+            stand = _turnLeft ? _asset.TurnLeft : _asset.TurnRight;
+            turning = Math.Max(Math.Abs(turning), TurnAboveRadiansPerSecond);
+            _turnTime += TickSeconds * Math.Clamp(Math.Abs(turning) / (MathF.PI / 4f / stand.Duration), 0.5f, 2f);
+        }
+
+        // Crouched, his crouched walk; facing elsewhere than he goes, the clip for the way he goes against his facing.
+        ModernClip move = crouched ? _asset.CrouchWalk
+            : heading != Vector2.Zero ? (Math.Abs(heading.X) >= Math.Abs(heading.Y)
+                ? (heading.X >= 0f ? _asset.AimWalk : _asset.WalkBack)
+                : (heading.Y > 0f ? _asset.StrafeRight : _asset.StrafeLeft))
+            : _running ? _asset.Run : aiming ? _asset.AimWalk : _asset.Walk;
         if (!ReferenceEquals(stand, _stand) || !ReferenceEquals(move, _move))
         {
             // Faded from what was showing, held where it was; mid-fade, from whichever of the two showed more.
@@ -390,18 +354,14 @@ internal sealed class ModernBody : IDisposable
 
         _fade = Math.Min(1f, _fade + (TickSeconds / BlendSeconds));
 
-        // The rifle comes up to the eye with the clips that aim it.
-        bool aimed = _moveWeight > 0.5f
-            ? ReferenceEquals(move, _asset.AimWalk) || ReferenceEquals(move, _asset.Run)
-            : ReferenceEquals(stand, _asset.AimIdle) || ReferenceEquals(stand, _asset.Fire);
-        _aimHold = Math.Clamp(_aimHold + ((aimed ? 1f : -1f) * TickSeconds / BlendSeconds), 0f, 1f);
-
         // The moving clip is played at the soldier's pace, so its feet keep to the ground he covers; a change of gait keeps the
         // stride where it was.
         float pace = moving && move.MetresPerSecond > 0f
             ? Math.Clamp(Speed / move.MetresPerSecond, SlowestPace, FastestPace)
             : 1f;
         _stride = (_stride + (TickSeconds * pace / move.Duration)) % 1f;
+        Showing = FormattableString.Invariant(
+            $"speed {Speed:0.00} m/s, stand {Name(stand)}, move {Name(move)} x{Smooth(_moveWeight):0.00} at pace {pace:0.00}, fade {_fade:0.00}");
         _standTime += TickSeconds;
 
         float hitWeight = 0f;
@@ -417,17 +377,44 @@ internal sealed class ModernBody : IDisposable
 
         SpringKicks();
         _asset.Pose(Mix(_stand, _move), _before, Smooth(_fade), _world, _skin, _hit, _hitTime, hitWeight, _kick.Length > 0 ? _kick : null);
-        // The hands' frame as the clips put them; aiming, the rifle is shifted in it and the left hand is reached after it.
-        Matrix4x4? hands = HandFrame(yaw, (Lift ?? 0f) + raise);
-        if (hands is { } before && AimShift(before) is { } shift && shift != Vector3.Zero)
+        // The rifle rides its bone, where the clip's hands carried it with its stock seated in the shoulder (baked in the
+        // build); the hands are brought back to it -- the right to its grip, the left to its handguard -- where they are near
+        // enough to be meant to be on it, the left except while a reload or a throw has it away on purpose.
+        if (_asset.Weapon >= 0 && _asset.LeftArm.Wrist >= 0 && _asset.RightArm.Wrist >= 0)
         {
-            ReachLeftHand(ModernBodyAsset.FromBody(shift));
+            Matrix4x4 weapon = _world[_asset.Weapon];
+            Vector3 right = Vector3.Transform(_rightGrip, weapon);
+            GripsForTesting = (_world[_asset.RightArm.Wrist].Translation, right, _world[_asset.LeftArm.Wrist].Translation,
+                Vector3.Transform(_leftGrip, weapon), weapon.Translation);
+            if (Vector3.Distance(right, _world[_asset.RightArm.Wrist].Translation) < LeftReachMetres)
+            {
+                ReachHand(_asset.RightArm, right);
+            }
+
+            Vector3 left = Vector3.Transform(_leftGrip, weapon);
+            if (_act is null && Vector3.Distance(left, _world[_asset.LeftArm.Wrist].Translation) < LeftReachMetres)
+            {
+                ReachHand(_asset.LeftArm, left);
+            }
         }
 
         _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
-        HoldRifle(calibrate: false, hands);
         _device.UpdateAnimatedMesh(Mesh, _vertices);
     }
+
+    /// <summary>Gets what the body last showed, for the body log (<c>dev_body_log</c>).</summary>
+    public string Showing { get; private set; } = string.Empty;
+
+    // A clip's name in the character file, for the log.
+    private string Name(ModernClip clip) =>
+        ReferenceEquals(clip, _asset.Idle) ? "idle" : ReferenceEquals(clip, _asset.Walk) ? "walk" : ReferenceEquals(clip, _asset.AimIdle) ? "aim_idle"
+        : ReferenceEquals(clip, _asset.Fire) ? "fire" : ReferenceEquals(clip, _asset.AimWalk) ? "aim_walk" : ReferenceEquals(clip, _asset.Run) ? "run"
+        : ReferenceEquals(clip, _asset.KneelIdle) ? "kneel_idle" : ReferenceEquals(clip, _asset.KneelAim) ? "kneel_aim"
+        : ReferenceEquals(clip, _asset.TurnLeft) ? "turn_left" : ReferenceEquals(clip, _asset.TurnRight) ? "turn_right"
+        : ReferenceEquals(clip, _asset.Reload) ? "reload" : ReferenceEquals(clip, _asset.KneelReload) ? "kneel_reload"
+        : ReferenceEquals(clip, _asset.Throw) ? "throw" : ReferenceEquals(clip, _asset.CrouchWalk) ? "crouch_walk"
+        : ReferenceEquals(clip, _asset.StrafeLeft) ? "strafe_left" : ReferenceEquals(clip, _asset.StrafeRight) ? "strafe_right"
+        : ReferenceEquals(clip, _asset.WalkBack) ? "walk_back" : "?";
 
     /// <summary>Gets where the rifle's muzzle and the end of its stock are, in the soldier's frame, metres, as last posed; null without one.</summary>
     public (Vector3 Muzzle, Vector3 Stock)? GunEnds
@@ -447,7 +434,39 @@ internal sealed class ModernBody : IDisposable
 
     // A pair of clips where the body is in them now.
     private ModernMix Mix(ModernClip stand, ModernClip move) =>
-        new(stand, _standTime, move, _stride * move.Duration, Smooth(_moveWeight));
+        new(stand, ReferenceEquals(stand, _act) ? _actTime : ReferenceEquals(stand, _asset.TurnLeft) || ReferenceEquals(stand, _asset.TurnRight) ? _turnTime : _standTime,
+            move, _stride * move.Duration, Smooth(_moveWeight));
+
+    /// <summary>Above this turn rate, in radians a second, a soldier standing still steps his turn.</summary>
+    public const float TurnAboveRadiansPerSecond = 0.6f;
+
+    /// <summary>The furthest a hand is brought back to the rifle from, in metres; further, the clip has it off it.</summary>
+    public const float LeftReachMetres = 0.25f;
+
+    /// <summary>Gets the wrists and where they were reached to, and the weapon bone, last tick, in glTF's world (testing).</summary>
+    internal (Vector3 RightWrist, Vector3 RightTarget, Vector3 LeftWrist, Vector3 LeftTarget, Vector3 Weapon) GripsForTesting { get; private set; }
+
+    // The wrists' places in the weapon bone's frame (see the constructor).
+    private Vector3 _leftGrip, _rightGrip;
+
+    private ModernClip? _act;
+    private float _actTime;
+    private float _turnTime;
+    private float _turnFor;
+    private bool _turnLeft;
+
+    /// <summary>How long a turn on the spot is stepped at least, in seconds.</summary>
+    public const float TurnHoldSeconds = 0.35f;
+
+    /// <summary>Plays a reload or a throw once over what he stands in, the rifle in his right hand meanwhile.</summary>
+    /// <param name="clip">The clip; <see cref="ModernClip.None"/> plays nothing.</param>
+    public void Act(ModernClip clip)
+    {
+        if (!ReferenceEquals(clip, ModernClip.None))
+        {
+            (_act, _actTime) = (clip, 0f);
+        }
+    }
 
     /// <summary>Works out how fast a character's walk clip covers ground, in metres a second, as its skeleton scales it.</summary>
     /// <remarks>Run once, as the character loads (<see cref="ModernBodyAsset.WalkMetresPerSecond"/>).</remarks>

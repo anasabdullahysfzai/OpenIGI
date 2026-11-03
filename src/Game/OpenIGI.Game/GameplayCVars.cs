@@ -386,6 +386,40 @@ public static class GameplayCVars
         CVarOptions.None,
         "Soldiers do not see the player (testing).");
 
+    /// <summary>A soldier the player's aim is held on every tick, for scripted fights (testing); -1 for none. Not retail.</summary>
+    public static readonly NumericCVar<int> BotTarget = CVar.Int(
+        "dev_bot_target",
+        -1,
+        -1,
+        int.MaxValue,
+        CVarOptions.None,
+        "Holds the player's aim on this soldier's chest every tick (testing); -1 for none.");
+
+    /// <summary>How far to the soldier's side the held aim is, in metres, so rounds pass him close by rather than strike.</summary>
+    public static readonly NumericCVar<float> BotMiss = CVar.Float(
+        "dev_bot_miss",
+        0f,
+        -5f,
+        5f,
+        CVarOptions.None,
+        "Aims this many metres beside the dev_bot_target soldier, for near misses (testing).");
+
+    /// <summary>A soldier whose modern body logs what it shows every tick (testing); -1 for none. Not retail.</summary>
+    public static readonly NumericCVar<int> BodyLog = CVar.Int(
+        "dev_body_log",
+        -1,
+        -1,
+        int.MaxValue,
+        CVarOptions.None,
+        "Logs this soldier's modern body every tick: speed, clips, blend, pace (testing); -1 for none.");
+
+    /// <summary>Whether the player's trigger is held, for scripted fights (testing).</summary>
+    public static readonly BoolCVar BotFire = CVar.Bool(
+        "dev_bot_fire",
+        false,
+        CVarOptions.None,
+        "Holds the player's trigger down (testing).");
+
     /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
     /// <remarks>
     /// idle, walk, aim, fire, aim_walk, run; hit_front, hit_back, hit_left, hit_right (once each time it is set); die_front,
@@ -395,7 +429,7 @@ public static class GameplayCVars
         "dev_modern_pose",
         string.Empty,
         CVarOptions.None,
-        "Forces every modern soldier body into one pose for testing: idle, walk, aim, fire, aim_walk, run, hit_<side>, die_<side>[_head].");
+        "Forces every modern soldier body into one pose for testing: idle, walk, aim, fire, aim_walk, run, kneel, kneel_aim, turn_left, turn_right, reload, throw, hit_<side>, die_<side>[_head].");
 
     /// <summary>Wires the profile variable to the values it stands for.</summary>
     /// <remarks>
