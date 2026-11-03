@@ -3,15 +3,32 @@ using OpenIGI.Core.Configuration;
 using OpenIGI.Core.Diagnostics;
 using OpenIGI.Core.Graphics;
 using OpenIGI.Core.Numerics;
+using OpenIGI.Game;
 using OpenIGI.Game.Ai;
 using OpenIGI.Host.Infrastructure;
 using OpenIGI.Presentation.Cameras;
+using OpenIGI.UI;
+using OpenIGI.UI.Layout;
 
 namespace OpenIGI.Host;
 
 public sealed partial class GameHost
 {
     private string? _pendingScreenshot;
+
+    // The animation viewer's list (dev_pose_next): every clip of a modern body, at ease, in a fight, struck and falling.
+    private static readonly string[] ViewerPoses =
+    [
+        "idle", "walk", "aim", "fire", "aim_walk", "run",
+        "react_15_front", "react_15_back", "react_13_front", "react_13_front_heavy", "react_14_back", "react_14_back_heavy",
+        "react_13_left", "react_13_left_heavy", "react_13_right", "react_13_right_heavy",
+        "react_5_front", "react_11_front", "react_2_front", "react_8_front",
+        "die_front", "die_back", "die_front_head", "die_back_head",
+    ];
+
+    private int _viewerPose = -1;
+    private string? _replayPose;
+    private int _poseLabelUntil;
     private bool _skipCutscenes;
 
     /// <summary>Registers the commands a test range is driven by: look at a soldier from a side, and write the frame.</summary>
@@ -63,6 +80,33 @@ public sealed partial class GameHost
             });
 
         console.Commands.Add(
+            "dev_pose_next",
+            "Shows the next animation of the modern soldier bodies (the animation viewer); dev_pose_prev goes back.",
+            context => ShowViewerPose(context, +1));
+        console.Commands.Add(
+            "dev_pose_prev",
+            "Shows the animation of the modern soldier bodies before this one.",
+            context => ShowViewerPose(context, -1));
+        console.Commands.Add(
+            "dev_pose_replay",
+            "Plays the modern soldier bodies' animation again from its start (a reaction or a fall plays once).",
+            context =>
+            {
+                _replayPose = GameplayCVars.ModernPose.Value;
+                GameplayCVars.ModernPose.Value = string.Empty;
+                _poseLabelUntil = _loop.Clock.FrameCount + 180;
+            });
+        console.Commands.Add(
+            "dev_pose_off",
+            "Hands the modern soldier bodies back to their soldiers.",
+            context =>
+            {
+                GameplayCVars.ModernPose.Value = string.Empty;
+                _viewerPose = -1;
+                _poseLabelUntil = _loop.Clock.FrameCount + 120;
+            });
+
+        console.Commands.Add(
             "dev_skip_cutscenes",
             "Skips every cutscene that can be skipped, from now on, as holding the key would.",
             context =>
@@ -85,6 +129,57 @@ public sealed partial class GameHost
 
                 _pendingScreenshot = path;
             });
+    }
+
+    private void ShowViewerPose(ConsoleCommandContext context, int step)
+    {
+        _viewerPose = (((_viewerPose < 0 && step < 0 ? 0 : _viewerPose) + step) % ViewerPoses.Length + ViewerPoses.Length) % ViewerPoses.Length;
+        GameplayCVars.ModernPose.Value = ViewerPoses[_viewerPose];
+        _poseLabelUntil = _loop.Clock.FrameCount + 240;
+        context.Print($"dev_pose: {ViewerPoses[_viewerPose]}");
+    }
+
+    // Once a frame: a replay puts its pose back the frame after it cleared it, and god mode is kept on the player's health,
+    // which a mission load builds afresh.
+    private void TickTestRange()
+    {
+        if (_replayPose is { } replay)
+        {
+            GameplayCVars.ModernPose.Value = replay;
+            _replayPose = null;
+        }
+
+        if (_mission.PlayerHealth is { } health)
+        {
+            health.Invulnerable = GameplayCVars.God.Value;
+        }
+    }
+
+    // What the animation viewer is showing, top centre, for a few seconds after it changes.
+    private void DrawPoseLabel(FrameLoopState state)
+    {
+        if (_loop.Clock.FrameCount > _poseLabelUntil || _shellType is not { } type)
+        {
+            return;
+        }
+
+        string pose = GameplayCVars.ModernPose.Value;
+        string label = pose.Length == 0 ? "ANIMATION: OFF (SOLDIERS' OWN)" : $"ANIMATION {_viewerPose + 1}/{ViewerPoses.Length}: {pose.ToUpperInvariant()}";
+        _device.Set2DProjection(SafeWindowWidth, SafeWindowHeight);
+        state.Batch.Begin();
+        LayoutContext layout = new(_window.Width, _window.Height);
+        UiPainter painter = UiPainter.Create(state.Batch, layout);
+        float size = layout.Px(28f);
+        UiVec2 extent = type.Heading.Measure(label, size);
+        painter.DrawTextShadowed(
+            type.Heading,
+            label,
+            new UiVec2(layout.SafeRect.X + ((layout.SafeRect.Width - extent.X) * 0.5f), layout.SafeRect.Y + layout.Px(60f)),
+            size,
+            Bgra32.FromRgb(236, 235, 230),
+            Bgra32.FromRgba(0, 0, 0, 160),
+            new UiVec2(0f, layout.Px(1f)));
+        state.Batch.End();
     }
 
     // The frame a screenshot command asked for, written once it is drawn.

@@ -405,7 +405,7 @@ internal sealed class SoldierWeaponDrawer(
 
         // A modern body holds its own rifle (g_modern_bodies); the original's is still placed, for its muzzle, but not drawn
         // until a death drops it.
-        if (member.Modern is { HasGun: true } && !member.Agent.View.IsDead)
+        if (member.Modern is { HasGun: true } && !member.Agent.View.IsDead && !GameplayCVars.ShowHiddenGun.Value)
         {
             return;
         }

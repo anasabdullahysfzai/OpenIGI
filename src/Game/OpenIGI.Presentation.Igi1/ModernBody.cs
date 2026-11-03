@@ -1,5 +1,6 @@
 using System.Numerics;
 using OpenIGI.Core.Graphics;
+using OpenIGI.Core.Numerics;
 using OpenIGI.Rendering;
 
 namespace OpenIGI.Presentation.Igi1;
@@ -48,6 +49,8 @@ internal sealed class ModernBody : IDisposable
     private float _fallRaise = float.NaN;
     private float _floor;
     private ModernClip? _hit;
+    private Vector3[] _kick = [];
+    private Vector3[] _kickSpeed = [];
     private float _hitTime;
 
     /// <summary>Initializes a new instance of the <see cref="ModernBody"/> class, its mesh in the bind pose.</summary>
@@ -64,8 +67,160 @@ internal sealed class ModernBody : IDisposable
         _vertices = new Vertex3D[asset.Vertices.Length];
         asset.Pose(0f, 0f, 0f, _world, _skin);
         asset.Skin(_skin, 0f, 0f, _vertices);
+        HoldRifle(calibrate: true, HandFrame(0f, 0f));
         Mesh = device.CreateAnimatedMesh(_vertices, asset.Indices);
     }
+
+    /// <summary>How far the rifle is raised, and drawn back into the shoulder, while he aims, in metres: the clips hold the hands
+    /// a little low and forward for the rifle's sights to come to the eye and its stock to the shoulder.</summary>
+    public const float AimRaise = 0.04f, AimSeat = 0.025f;
+
+    // How far into his aim the rifle is, nought to one, eased as the clips are.
+    private float _aimHold;
+
+    // The rifle in the idle's first frame, where it was fitted, in the frame its two hands make (see HandFrame).
+    private (Vector3 Position, Vector3 Normal)[] _gunInHands = [];
+
+    /// <summary>
+    /// Places the rifle between the hands: its grip in the right palm and its barrel running out through the left, top up, as it
+    /// lay between them in the idle it was fitted in. Skinned to the right hand alone, it took that hand's every turn, and a
+    /// clip from another set -- the aim, the walk with the rifle up -- holds its hand differently, so the rifle came out across
+    /// the body with the left hand on nothing.
+    /// </summary>
+    private void HoldRifle(bool calibrate, Matrix4x4? hands)
+    {
+        int[] gun = _asset.GunVertices;
+        if (gun.Length == 0 || hands is not { } frame)
+        {
+            return;
+        }
+
+        if (calibrate)
+        {
+            Matrix4x4.Invert(frame, out Matrix4x4 into);
+            _gunInHands = [.. gun.Select(i => (
+                Vector3.Transform(Vec(_vertices[i].Position), into),
+                Vector3.Normalize(Vector3.TransformNormal(Vec(_vertices[i].Normal), into))))];
+            return;
+        }
+
+        // Aiming, up and back (AimShift), the left hand reached after it (ReachLeftHand).
+        frame.Translation += AimShift(frame);
+
+        for (int k = 0; k < gun.Length; k++)
+        {
+            Vertex3D old = _vertices[gun[k]];
+            Vector3 at = Vector3.Transform(_gunInHands[k].Position, frame);
+            Vector3 facing = Vector3.Normalize(Vector3.TransformNormal(_gunInHands[k].Normal, frame));
+            _vertices[gun[k]] = new Vertex3D(
+                new Vector3f(at.X, at.Y, at.Z), new Vector3f(facing.X, facing.Y, facing.Z), old.DiffuseU, old.DiffuseV, colour: _asset.Tone);
+        }
+    }
+
+    // The hands' frame, in the soldier's: at the right palm, along to the left palm, its third axis up as far as that allows.
+    private Matrix4x4? HandFrame(float yaw, float lift)
+    {
+        Vector3 Palm((int Wrist, int Knuckle) palm) =>
+            (Hand(palm.Wrist, yaw, lift) + Hand(palm.Knuckle, yaw, lift)) / 2f;
+        if (_asset.RightPalm.Wrist < 0 || _asset.LeftPalm.Wrist < 0)
+        {
+            return null;
+        }
+
+        Vector3 right = Palm(_asset.RightPalm), left = Palm(_asset.LeftPalm);
+        Vector3 along = left - right;
+        if (along.LengthSquared() < 0.0025f)
+        {
+            return null;
+        }
+
+        along = Vector3.Normalize(along);
+        Vector3 up = Vector3.UnitZ - (along * Vector3.Dot(along, Vector3.UnitZ));
+        up = up.LengthSquared() < 1e-6f ? Vector3.UnitY : Vector3.Normalize(up);
+        Vector3 side = Vector3.Cross(up, along);
+        return new Matrix4x4(
+            along.X, along.Y, along.Z, 0f,
+            side.X, side.Y, side.Z, 0f,
+            up.X, up.Y, up.Z, 0f,
+            right.X, right.Y, right.Z, 1f);
+    }
+
+    /// <summary>Gets both palms in the soldier's frame as last posed, for testing.</summary>
+    internal (Vector3 Right, Vector3 Left) PalmsForTesting =>
+        ((Hand(_asset.RightPalm.Wrist, 0f, 0f) + Hand(_asset.RightPalm.Knuckle, 0f, 0f)) / 2f,
+         (Hand(_asset.LeftPalm.Wrist, 0f, 0f) + Hand(_asset.LeftPalm.Knuckle, 0f, 0f)) / 2f);
+
+    // How far the rifle moves from where the hands' frame puts it while he aims, in the soldier's frame.
+    private Vector3 AimShift(Matrix4x4 frame)
+    {
+        if (_aimHold <= 0f)
+        {
+            return Vector3.Zero;
+        }
+
+        float hold = Smooth(_aimHold);
+        Vector3 along = new(frame.M11, frame.M12, frame.M13), up = new(frame.M31, frame.M32, frame.M33);
+        return (up * (AimRaise * hold)) - (along * (AimSeat * hold));
+    }
+
+    /// <summary>
+    /// Moves the left hand by a shift, in glTF's world, bending the elbow and turning the arm at the shoulder: the two-bone reach
+    /// that keeps it on the rifle's handguard when the rifle is moved from where the clip holds it.
+    /// </summary>
+    private void ReachLeftHand(Vector3 shift)
+    {
+        (int shoulder, int elbow, int wrist) = _asset.LeftArm;
+        if (shoulder < 0 || elbow < 0 || wrist < 0)
+        {
+            return;
+        }
+
+        Vector3 a = _world[shoulder].Translation, b = _world[elbow].Translation, c = _world[wrist].Translation;
+        Vector3 target = c + shift;
+        float upper = Vector3.Distance(a, b), lower = Vector3.Distance(b, c);
+        float reach = Math.Clamp(Vector3.Distance(a, target), Math.Abs(upper - lower) + 1e-4f, upper + lower - 1e-4f);
+
+        // The elbow first: open or close it until the shoulder-to-wrist span is the reach.
+        Vector3 toShoulder = a - b, toWrist = c - b;
+        Vector3 bend = Vector3.Cross(toShoulder, toWrist);
+        if (bend.LengthSquared() > 1e-10f)
+        {
+            float now = MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(toShoulder), Vector3.Normalize(toWrist)), -1f, 1f));
+            float wanted = MathF.Acos(Math.Clamp(((upper * upper) + (lower * lower) - (reach * reach)) / (2f * upper * lower), -1f, 1f));
+            Turn(elbow, Quaternion.CreateFromAxisAngle(Vector3.Normalize(bend), wanted - now));
+        }
+
+        // Then the whole arm at the shoulder, so the wrist comes to the target.
+        Vector3 from = _world[wrist].Translation - a, to = target - a;
+        Vector3 axis = Vector3.Cross(from, to);
+        if (axis.LengthSquared() > 1e-10f)
+        {
+            float angle = MathF.Acos(Math.Clamp(Vector3.Dot(Vector3.Normalize(from), Vector3.Normalize(to)), -1f, 1f));
+            Turn(shoulder, Quaternion.CreateFromAxisAngle(Vector3.Normalize(axis), angle));
+        }
+    }
+
+    // Turns a node and all below it about its joint, in glTF's world, and their skinning with them.
+    private void Turn(int node, Quaternion turn)
+    {
+        Vector3 pivot = _world[node].Translation;
+        Matrix4x4 about = Matrix4x4.CreateTranslation(-pivot) * Matrix4x4.CreateFromQuaternion(turn) * Matrix4x4.CreateTranslation(pivot);
+        int[] joints = _asset.JointOfNode;
+        foreach (int n in _asset.Below(node))
+        {
+            _world[n] *= about;
+            if (joints[n] >= 0)
+            {
+                _skin[joints[n]] = _asset.Joints[joints[n]].InverseBind * _world[n];
+            }
+        }
+    }
+
+    private static Vector3 Vec(Vector3f v) => new(v.X, v.Y, v.Z);
+
+    // A node's place in the soldier's frame, metres.
+    private Vector3 Hand(int node, float yaw, float lift) =>
+        node < 0 ? Vector3.Zero : ModernBodyAsset.ToBody(_world[node].Translation, yaw) + new Vector3(0f, 0f, lift);
 
     /// <summary>Gets the mesh the body is drawn from.</summary>
     public MeshHandle Mesh { get; private set; }
@@ -89,11 +244,82 @@ internal sealed class ModernBody : IDisposable
     public const float HitInSeconds = 0.1f, HitOutSeconds = 0.3f;
 
     /// <summary>Starts a flinch over whatever the body is doing; a new one replaces one still playing.</summary>
-    /// <param name="hit">The flinch (<see cref="ModernBodyAsset.Hit"/>).</param>
+    /// <param name="hit">The flinch (<see cref="ModernBodyAsset.Hit(float, float, int, bool)"/>).</param>
     public void Flinch(ModernClip hit)
     {
         _hit = hit;
         _hitTime = 0f;
+    }
+
+    /// <summary>How fast a kicked bone springs back, in radians a second, and how much it is damped (under one overshoots).</summary>
+    public const float KickSpring = 9f, KickDamping = 0.5f;
+
+    /// <summary>The furthest a bone may be kicked, however many rounds stack, in radians.</summary>
+    public const float KickLimit = 0.8f;
+
+    /// <summary>
+    /// Kicks the bones a round struck: each turned towards where the round was going, the struck bone most, then sprung back
+    /// over whatever the clips are doing. Rounds stack, so a burst kicks harder than one.
+    /// </summary>
+    /// <param name="zone">The original's hit zone.</param>
+    /// <param name="ahead">How far ahead the shooter was, along the ground, unit length with <paramref name="right"/>.</param>
+    /// <param name="right">How far to the right.</param>
+    /// <param name="strength">How much of the zone's full kick, one being all of it.</param>
+    public void Kick(int zone, float ahead, float right, float strength = 1f)
+    {
+        if (_kick.Length == 0)
+        {
+            (_kick, _kickSpeed) = (new Vector3[_world.Length], new Vector3[_world.Length]);
+        }
+
+        // Where the round was going, in glTF's world, along the ground.
+        Vector3 going = ModernBodyAsset.FromBody(new Vector3(-right, -ahead, 0f));
+        if (going.LengthSquared() < 1e-6f)
+        {
+            return;
+        }
+
+        going = Vector3.Normalize(going);
+        Vector3 up = Vector3.UnitY;
+
+        // An underdamped spring's first swing reaches about this share of speed over spring.
+        float root = MathF.Sqrt(1f - (KickDamping * KickDamping));
+        float swing = MathF.Exp(-KickDamping / root * MathF.Atan(root / KickDamping));
+        foreach ((int node, float radians) in _asset.KickOf(zone))
+        {
+            // The bone turns about its joint so that its far end goes the round's way: about the axis across the bone and the push.
+            int child = _asset.ChildOf(node);
+            Vector3 bone = child >= 0 ? _world[child].Translation - _world[node].Translation : up;
+            Vector3 axis = Vector3.Cross(bone, going);
+            if (axis.LengthSquared() < 1e-8f)
+            {
+                axis = Vector3.Cross(up, going);
+            }
+
+            // Stepped at the tick, the spring's first swing falls short of the smooth one's by about this much.
+            const float stepped = 1.35f;
+            _kickSpeed[node] += Vector3.Normalize(axis) * (radians * strength * KickSpring / swing * stepped);
+        }
+    }
+
+    /// <summary>Gets how far a node is kicked now, in radians, for testing.</summary>
+    /// <param name="node">The node.</param>
+    /// <returns>The angle.</returns>
+    internal float KickAngleForTesting(int node) => node < _kick.Length ? _kick[node].Length() : 0f;
+
+    // One tick of every kicked bone's spring.
+    private void SpringKicks()
+    {
+        for (int node = 0; node < _kick.Length; node++)
+        {
+            Vector3 pull = (-KickSpring * KickSpring * _kick[node]) - (2f * KickDamping * KickSpring * _kickSpeed[node]);
+            _kickSpeed[node] += pull * TickSeconds;
+            _kick[node] += _kickSpeed[node] * TickSeconds;
+            if (_kick[node].Length() > KickLimit)
+            {
+                _kick[node] = Vector3.Normalize(_kick[node]) * KickLimit;
+            }
+        }
     }
 
     /// <summary>Gets a value indicating whether the body is falling, or lying where it fell.</summary>
@@ -164,6 +390,12 @@ internal sealed class ModernBody : IDisposable
 
         _fade = Math.Min(1f, _fade + (TickSeconds / BlendSeconds));
 
+        // The rifle comes up to the eye with the clips that aim it.
+        bool aimed = _moveWeight > 0.5f
+            ? ReferenceEquals(move, _asset.AimWalk) || ReferenceEquals(move, _asset.Run)
+            : ReferenceEquals(stand, _asset.AimIdle) || ReferenceEquals(stand, _asset.Fire);
+        _aimHold = Math.Clamp(_aimHold + ((aimed ? 1f : -1f) * TickSeconds / BlendSeconds), 0f, 1f);
+
         // The moving clip is played at the soldier's pace, so its feet keep to the ground he covers; a change of gait keeps the
         // stride where it was.
         float pace = moving && move.MetresPerSecond > 0f
@@ -183,9 +415,34 @@ internal sealed class ModernBody : IDisposable
             }
         }
 
-        _asset.Pose(Mix(_stand, _move), _before, Smooth(_fade), _world, _skin, _hit, _hitTime, hitWeight);
+        SpringKicks();
+        _asset.Pose(Mix(_stand, _move), _before, Smooth(_fade), _world, _skin, _hit, _hitTime, hitWeight, _kick.Length > 0 ? _kick : null);
+        // The hands' frame as the clips put them; aiming, the rifle is shifted in it and the left hand is reached after it.
+        Matrix4x4? hands = HandFrame(yaw, (Lift ?? 0f) + raise);
+        if (hands is { } before && AimShift(before) is { } shift && shift != Vector3.Zero)
+        {
+            ReachLeftHand(ModernBodyAsset.FromBody(shift));
+        }
+
         _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
+        HoldRifle(calibrate: false, hands);
         _device.UpdateAnimatedMesh(Mesh, _vertices);
+    }
+
+    /// <summary>Gets where the rifle's muzzle and the end of its stock are, in the soldier's frame, metres, as last posed; null without one.</summary>
+    public (Vector3 Muzzle, Vector3 Stock)? GunEnds
+    {
+        get
+        {
+            (int muzzle, int stock) = _asset.GunEnds;
+            if (muzzle < 0)
+            {
+                return null;
+            }
+
+            Vector3f m = _vertices[muzzle].Position, s = _vertices[stock].Position;
+            return (new Vector3(m.X, m.Y, m.Z), new Vector3(s.X, s.Y, s.Z));
+        }
     }
 
     // A pair of clips where the body is in them now.

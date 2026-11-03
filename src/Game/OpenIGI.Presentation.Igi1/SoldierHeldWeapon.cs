@@ -1,3 +1,5 @@
+using OpenIGI.Core.Graphics;
+using OpenIGI.Core.Numerics;
 using OpenIGI.Formats.World;
 using OpenIGI.Game.World;
 using OpenIGI.Rendering;
@@ -25,6 +27,26 @@ internal sealed class SoldierHeldWeapon(
     IHeldWeaponPresenter? presentation)
 {
     public MeshGeometry Geometry { get; } = geometry;
+
+    /// <summary>
+    /// Gets the muzzle in the model's own frame, metres: the middle of its far end along +Y, which is where the original's
+    /// guns point (their top is +Z). A modern body that carries a rifle of its own stands this one's muzzle on that rifle's, so the flame does.
+    /// </summary>
+    public Vector3f Muzzle => _muzzle ??= FarEnd(Geometry.Vertices);
+
+    private Vector3f? _muzzle;
+
+    private static Vector3f FarEnd(Vertex3D[] vertices)
+    {
+        if (vertices.Length == 0)
+        {
+            return default;
+        }
+
+        float far = vertices.Max(v => v.Position.Y);
+        Vertex3D[] end = [.. vertices.Where(v => v.Position.Y > far - 0.02f)];
+        return new Vector3f(end.Average(v => v.Position.X), far, end.Average(v => v.Position.Z));
+    }
 
     public MeshHandle Mesh { get; } = mesh;
 

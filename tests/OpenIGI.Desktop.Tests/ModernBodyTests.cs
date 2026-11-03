@@ -157,6 +157,112 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.True(aimed > 0.6f && firing > 0.6f, "the rifle does not point where he faces when he aims");
     }
 
+    [RequiresModernBodyFact]
+    public void ARoundKicksTheBoneItStruck()
+    {
+        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        int head = Array.IndexOf(asset.Names, "mixamorig:Head");
+        int top = Array.IndexOf(asset.Names, "mixamorig:HeadTop_End");
+        Matrix4x4[] world = new Matrix4x4[asset.Rest.Length], skin = new Matrix4x4[asset.Joints.Length];
+        ModernMix still = new(asset.Idle, 0f, asset.Walk, 0f, 0f);
+        asset.Pose(still, still, 1f, world, skin, null, 0f, 0f);
+        Vector3 before = ModernBodyAsset.ToBody(world[top].Translation, 0f);
+        Vector3[] kicks = new Vector3[asset.Rest.Length];
+        kicks[head] = Vector3.UnitX * 0.4f;
+        asset.Pose(still, still, 1f, world, skin, null, 0f, 0f, kicks);
+        Vector3 after = ModernBodyAsset.ToBody(world[top].Translation, 0f);
+        output.WriteLine($"head top moves {Vector3.Distance(before, after):0.000} m under a 0.4 rad kick");
+        Assert.True(Vector3.Distance(before, after) > 0.03f, "a kick does not turn the bone");
+
+        // A head shot from the front: the head swings back, at its most about 0.15 s on, and settles over half a second.
+        using ModernBody body = new(asset, new RecordingGraphicsDevice());
+        body.Tick(0f, 0f);
+        body.Kick(15, 1f, 0f);
+        float most = 0f;
+        for (int tick = 0; tick < 16; tick++)
+        {
+            body.Tick(0f, 0f);
+            most = Math.Max(most, body.KickAngleForTesting(head));
+            output.WriteLine($"tick {tick}: head kicked {body.KickAngleForTesting(head) * 180f / MathF.PI:0.0} degrees");
+        }
+
+        Assert.InRange(most * 180f / MathF.PI, 18f, 40f);
+    }
+
+    [RequiresModernBodyFact]
+    public void TheRifleMuzzleIsFoundAtItsFrontEnd()
+    {
+        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        using ModernBody body = new(asset, new RecordingGraphicsDevice());
+        for (int tick = 0; tick < 20; tick++)
+        {
+            body.Tick(0f, 0f, 0f, aiming: true);
+        }
+
+        // Aimed, the rifle points the way he faces (+Y): the muzzle is ahead of the stock, by about its length.
+        (System.Numerics.Vector3 muzzle, System.Numerics.Vector3 stock) = body.GunEnds!.Value;
+        output.WriteLine($"muzzle ({muzzle.X:0.00}, {muzzle.Y:0.00}, {muzzle.Z:0.00}), stock ({stock.X:0.00}, {stock.Y:0.00}, {stock.Z:0.00})");
+        Assert.True(muzzle.Y - stock.Y > 0.6f, "the muzzle is not at the front of the aimed rifle");
+        Assert.InRange(Vector3.Distance(muzzle, stock), 0.75f, 0.95f);
+    }
+
+    [RequiresModernBodyFact]
+    public void AReactionMovesHisBodyButLeavesHisHandsOnTheRifle()
+    {
+        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        Assert.Equal(10, asset.Reacts.Count);
+        int chest = Array.IndexOf(asset.Names, "mixamorig:Spine2"), head = Array.IndexOf(asset.Names, "mixamorig:Head");
+        int hand = Array.IndexOf(asset.Names, "mixamorig:RightHand"), left = Array.IndexOf(asset.Names, "mixamorig:LeftHand");
+        ModernMix still = new(asset.Idle, 0f, asset.Walk, 0f, 0f);
+        Matrix4x4[] world = new Matrix4x4[asset.Rest.Length], skin = new Matrix4x4[asset.Joints.Length];
+
+        // The hands where the chest carries them, and the head, at ease and half a second into a headshot.
+        (Vector3 Hand, Vector3 Left, Vector3 Head) Measure(ModernClip? react)
+        {
+            asset.Pose(still, still, 1f, world, skin, react, 0.5f, react is null ? 0f : 1f);
+            Matrix4x4.Invert(world[chest], out Matrix4x4 toChest);
+            return (Vector3.Transform(world[hand].Translation, toChest), Vector3.Transform(world[left].Translation, toChest), world[head].Translation);
+        }
+
+        var calm = Measure(null);
+        var shot = Measure(asset.Hit(1f, 0f, zone: 15, heavy: false));
+        output.WriteLine($"head moves {Vector3.Distance(calm.Head, shot.Head):0.000}, right hand against the chest {Vector3.Distance(calm.Hand, shot.Hand):0.000000}, left {Vector3.Distance(calm.Left, shot.Left):0.000000} (glTF units)");
+        Assert.True(Vector3.Distance(calm.Head, shot.Head) > 0.01f, "the headshot reaction does not move his head");
+        Assert.True(Vector3.Distance(calm.Hand, shot.Hand) < 1e-3f && Vector3.Distance(calm.Left, shot.Left) < 1e-3f, "the reaction moves his hands off the rifle");
+    }
+
+    [RequiresModernBodyFact]
+    public void InEveryClipTheRifleLiesBetweenHisHands()
+    {
+        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        foreach ((string name, bool aiming, float speed) in new[] { ("idle", false, 0f), ("aim", true, 0f), ("walk", false, 1.1f), ("aim_walk", true, 1.8f), ("run", true, 3f) })
+        {
+            using ModernBody body = new(asset, new RecordingGraphicsDevice());
+            float worst = 0f;
+            for (int tick = 0; tick < 60; tick++)
+            {
+                body.Tick(speed / 30f, 0f, 0f, aiming);
+                if (tick < 15)
+                {
+                    continue;
+                }
+
+                // The left palm on the line the barrel runs along, the right one at the grip end of it.
+                (Vector3 muzzle, Vector3 stock) = body.GunEnds!.Value;
+                (Vector3 right, Vector3 left) = body.PalmsForTesting;
+                Vector3 line = Vector3.Normalize(muzzle - stock);
+                Vector3 off = (left - stock) - (line * Vector3.Dot(left - stock, line));
+                worst = Math.Max(worst, off.Length());
+                Assert.True(Vector3.Dot(muzzle - stock, line) > 0.7f && Vector3.Dot(left - right, line) > 0f, $"{name}: the rifle does not run from the right hand towards the left");
+            }
+
+            // Measured against the idle's, where the rifle was fitted: its line runs tip to tip, below the bore the hands hold.
+            output.WriteLine($"{name}: left palm at most {worst:0.000} m off the rifle's tip-to-tip line");
+            // Aiming, the rifle is raised and drawn back, and the left hand reached after it: no further off than at ease.
+            Assert.True(worst < 0.10f, $"{name}: the left hand comes {worst:0.00} m off the rifle");
+        }
+    }
+
     // The posed mesh in the soldier's frame.
     private static Vertex3D[] Skinned(ModernBodyAsset asset, float walkTime, float walkWeight)
     {

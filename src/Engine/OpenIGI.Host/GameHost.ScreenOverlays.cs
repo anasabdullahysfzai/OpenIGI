@@ -450,6 +450,7 @@ public sealed partial class GameHost
 
         DrawTouchControls(state);
         DrawCutsceneSkip(state);
+        DrawPoseLabel(state);
 
         _device.EndStageTiming();
 

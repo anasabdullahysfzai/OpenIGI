@@ -365,6 +365,27 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "How bright the modern soldier character is drawn, as a multiple of its textures in linear light (1 = as painted; 0.35 sits in I.G.I.'s levels).");
 
+    /// <summary>Whether the original gun a modern body carries unseen is drawn as well, to check it lies along the modern rifle.</summary>
+    public static readonly BoolCVar ShowHiddenGun = CVar.Bool(
+        "dev_show_hidden_gun",
+        false,
+        CVarOptions.None,
+        "Draws the original gun a modern soldier body carries unseen (its muzzle flame's placement), for testing.");
+
+    /// <summary>Whether the player takes no damage, for watching soldiers up close. Not retail.</summary>
+    public static readonly BoolCVar God = CVar.Bool(
+        "dev_god",
+        false,
+        CVarOptions.None,
+        "The player takes no damage (testing).");
+
+    /// <summary>Whether soldiers do not see the player, so they carry on as they were while he watches them. Not retail.</summary>
+    public static readonly BoolCVar NoTarget = CVar.Bool(
+        "dev_notarget",
+        false,
+        CVarOptions.None,
+        "Soldiers do not see the player (testing).");
+
     /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
     /// <remarks>
     /// idle, walk, aim, fire, aim_walk, run; hit_front, hit_back, hit_left, hit_right (once each time it is set); die_front,

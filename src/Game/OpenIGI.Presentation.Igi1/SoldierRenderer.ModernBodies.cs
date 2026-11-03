@@ -24,6 +24,10 @@ public sealed partial class SoldierRenderer
     private readonly Dictionary<SoldierMember, double> _modernStandingHeights = [];
     private readonly Dictionary<SoldierMember, float> _modernRootTops = [];
     private readonly Dictionary<SoldierMember, int> _modernHitsSeen = [];
+    private readonly Dictionary<SoldierMember, int> _modernLastHitTick = [];
+
+    // Two rounds within this many ticks make the second a heavy one: a burst staggers where a single round flinches.
+    private const int HeavyHitTicks = 18;
 
     /// <summary>Gives a soldier his modern body for this tick, or takes it away.</summary>
     /// <param name="group">The soldier's group, whose model stands him on the ground.</param>
@@ -79,9 +83,21 @@ public sealed partial class SoldierRenderer
             if (view.LastHit.Count != _modernHitsSeen.GetValueOrDefault(member))
             {
                 _modernHitsSeen[member] = view.LastHit.Count;
-                if (asset.Hit(view.LastHit.Ahead, view.LastHit.Right) is { } hit)
+                (float ahead, float right, int zone) = (view.LastHit.Ahead, view.LastHit.Right, view.LastHit.Zone);
+
+                // A captured reaction for where it struck and from where -- a heavy one when it came hard on the heels of
+                // another -- played over all of him but his arms, which keep the rifle. A limb also takes a small kick of its own.
+                int now = _sim.TickCount;
+                bool heavy = _modernLastHitTick.TryGetValue(member, out int last) && now - last <= HeavyHitTicks;
+                _modernLastHitTick[member] = now;
+                if (asset.Hit(ahead, right, zone, heavy) is { } hit)
                 {
                     body.Flinch(hit);
+                }
+
+                if (zone < 12)
+                {
+                    body.Kick(zone, ahead, right, strength: 0.5f);
                 }
             }
         }
@@ -118,6 +134,48 @@ public sealed partial class SoldierRenderer
 
             body.Tick(0f, yaw);
             return;
+        }
+
+        // kick_<zone>_<front|back|left|right>: the round's kick alone, once each time it is set, for the range to catch at its swing.
+        if (fresh && forced.StartsWith("kick_", StringComparison.Ordinal))
+        {
+            string[] parts = forced.Split('_');
+            if (parts.Length == 3 && int.TryParse(parts[1], out int zone))
+            {
+                (float ahead, float right) = parts[2] switch
+                {
+                    "back" => (-1f, 0f),
+                    "left" => (0f, -1f),
+                    "right" => (0f, 1f),
+                    _ => (1f, 0f),
+                };
+                body.Kick(zone, ahead, right);
+            }
+        }
+
+        // react_<zone>_<front|back|left|right>[_heavy]: the reaction a round there would play, once each time it is set.
+        if (fresh && forced.StartsWith("react_", StringComparison.Ordinal))
+        {
+            string[] parts = forced.Split('_');
+            if (parts.Length >= 3 && int.TryParse(parts[1], out int zone))
+            {
+                (float ahead, float right) = parts[2] switch
+                {
+                    "back" => (-1f, 0f),
+                    "left" => (0f, -1f),
+                    "right" => (0f, 1f),
+                    _ => (1f, 0f),
+                };
+                if (asset.Hit(ahead, right, zone, heavy: parts.Length > 3) is { } react)
+                {
+                    body.Flinch(react);
+                }
+
+                if (zone < 12)
+                {
+                    body.Kick(zone, ahead, right, strength: 0.5f);
+                }
+            }
         }
 
         if (fresh && forced.StartsWith("hit_", StringComparison.Ordinal))

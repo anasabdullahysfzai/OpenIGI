@@ -63,6 +63,138 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the lowest point of the bind pose, along glTF's up, which the soldier's lowest point is matched to.</summary>
     public float LowestY { get; private set; }
 
+    /// <summary>
+    /// Where a round in each of the original's hit zones (<c>HumanDamage.ZoneName</c>) kicks the character: the bones it turns
+    /// and how far at most, in degrees, the struck bone most and the ones above it less.
+    /// </summary>
+    private static readonly Dictionary<int, (string Bone, float Degrees)[]> KickBones = new()
+    {
+        [0] = [("RightFoot", 18f), ("RightLeg", 8f)],
+        [1] = [("RightLeg", 22f), ("RightUpLeg", 8f), ("Hips", 3f)],
+        [2] = [("RightUpLeg", 18f), ("Hips", 5f), ("Spine", 3f)],
+        [3] = [("RightHand", 30f), ("RightForeArm", 12f)],
+        [4] = [("RightForeArm", 22f), ("RightArm", 10f), ("Spine2", 3f)],
+        [5] = [("RightArm", 22f), ("RightShoulder", 10f), ("Spine2", 5f)],
+        [6] = [("LeftFoot", 18f), ("LeftLeg", 8f)],
+        [7] = [("LeftLeg", 22f), ("LeftUpLeg", 8f), ("Hips", 3f)],
+        [8] = [("LeftUpLeg", 18f), ("Hips", 5f), ("Spine", 3f)],
+        [9] = [("LeftHand", 30f), ("LeftForeArm", 12f)],
+        [10] = [("LeftForeArm", 22f), ("LeftArm", 10f), ("Spine2", 3f)],
+        [11] = [("LeftArm", 22f), ("LeftShoulder", 10f), ("Spine2", 5f)],
+        [12] = [("Spine2", 10f), ("Spine1", 8f), ("Spine", 5f), ("Head", 6f)],
+        [13] = [("Spine2", 10f), ("Spine1", 8f), ("Spine", 5f), ("Head", 6f)],
+        [14] = [("Spine2", 10f), ("Spine1", 8f), ("Spine", 5f), ("Head", 6f)],
+        [15] = [("Head", 28f), ("Neck", 10f), ("Spine2", 4f)],
+        [16] = [("Neck", 20f), ("Head", 12f), ("Spine2", 4f)],
+    };
+
+    /// <summary>Gets the nodes a round in a zone kicks and how far each turns at most, in radians; none for a zone it has none for.</summary>
+    /// <param name="zone">The original's hit zone.</param>
+    /// <returns>The nodes and their reach.</returns>
+    public IEnumerable<(int Node, float Radians)> KickOf(int zone) =>
+        (KickBones.TryGetValue(zone, out (string Bone, float Degrees)[]? bones) ? bones : [])
+            .Select(b => (Node: Array.IndexOf(Names, "mixamorig:" + b.Bone), Radians: b.Degrees * MathF.PI / 180f))
+            .Where(b => b.Node >= 0);
+
+    /// <summary>Gets a node's first child, which the bone runs to, or -1.</summary>
+    /// <param name="node">The node.</param>
+    /// <returns>The child.</returns>
+    public int ChildOf(int node) => Array.IndexOf(Parents, node);
+
+    /// <summary>Turns a direction of the soldier's frame into glTF's, the inverse of <see cref="ToBody"/> without its yaw.</summary>
+    /// <param name="v">The direction.</param>
+    /// <returns>It in glTF's frame.</returns>
+    public static Vector3 FromBody(Vector3 v) => new(-v.X, v.Z, v.Y);
+
+    /// <summary>Gets the rifle's vertices, which the hands place (<see cref="ModernBody"/>) rather than the skin; none without one.</summary>
+    public int[] GunVertices { get; private set; } = [];
+
+    /// <summary>Gets the nodes either palm is measured between: each hand's wrist and middle knuckle, or -1.</summary>
+    public (int Wrist, int Knuckle) RightPalm => (Array.IndexOf(Names, "mixamorig:RightHand"), Array.IndexOf(Names, "mixamorig:RightHandMiddle1"));
+
+    /// <summary>Gets the left arm's three joints, shoulder to wrist, or -1 each: what the left hand is reached with.</summary>
+    public (int Shoulder, int Elbow, int Wrist) LeftArm =>
+        (Array.IndexOf(Names, "mixamorig:LeftArm"), Array.IndexOf(Names, "mixamorig:LeftForeArm"), Array.IndexOf(Names, "mixamorig:LeftHand"));
+
+    /// <summary>Gets a node and every node below it.</summary>
+    /// <param name="node">The node.</param>
+    /// <returns>The nodes, parents before children.</returns>
+    public int[] Below(int node)
+    {
+        if (_below.TryGetValue(node, out int[]? known))
+        {
+            return known;
+        }
+
+        List<int> nodes = [node];
+        for (int n = node + 1; n < Parents.Length; n++)
+        {
+            if (nodes.Contains(Parents[n]))
+            {
+                nodes.Add(n);
+            }
+        }
+
+        return _below[node] = [.. nodes];
+    }
+
+    private readonly Dictionary<int, int[]> _below = [];
+
+    /// <summary>Gets the skin's joint each node is, or -1 for a node the skin does not use.</summary>
+    public int[] JointOfNode => _jointOfNode ??= BuildJointOfNode();
+
+    private int[]? _jointOfNode;
+
+    private int[] BuildJointOfNode()
+    {
+        int[] joints = [.. Enumerable.Repeat(-1, Rest.Length)];
+        for (int j = 0; j < Joints.Length; j++)
+        {
+            joints[Joints[j].Node] = j;
+        }
+
+        return joints;
+    }
+
+    /// <summary>Gets the left palm's nodes, as <see cref="RightPalm"/>.</summary>
+    public (int Wrist, int Knuckle) LeftPalm => (Array.IndexOf(Names, "mixamorig:LeftHand"), Array.IndexOf(Names, "mixamorig:LeftHandMiddle1"));
+
+    /// <summary>Gets the vertices at the rifle's muzzle and at the end of its stock, or -1 each where it has no rifle.</summary>
+    public (int Muzzle, int Stock) GunEnds { get; private set; } = (-1, -1);
+
+    // The rifle's two ends: its longest run, the thin end the muzzle and the tall one the stock.
+    private (int Muzzle, int Stock) FindGunEnds()
+    {
+        int[] gun = [.. Subsets.Where(s => s.Gun).SelectMany(s => Indices.Skip(s.IndexOffset).Take(s.IndexCount)).Select(i => (int)i).Distinct()];
+        if (gun.Length < 8)
+        {
+            return (-1, -1);
+        }
+
+        Vector3 low = new(float.MaxValue), high = new(float.MinValue);
+        foreach (int i in gun)
+        {
+            (low, high) = (Vector3.Min(low, Vertices[i].Position), Vector3.Max(high, Vertices[i].Position));
+        }
+
+        Vector3 size = high - low;
+        Vector3 along = size.X >= size.Y && size.X >= size.Z ? Vector3.UnitX : size.Y >= size.Z ? Vector3.UnitY : Vector3.UnitZ;
+        float span = Vector3.Dot(size, along);
+        int first = gun.MinBy(i => Vector3.Dot(Vertices[i].Position, along));
+        int last = gun.MaxBy(i => Vector3.Dot(Vertices[i].Position, along));
+
+        // How thick the rifle is within a tenth of its length of each end.
+        float Thickness(int end)
+        {
+            float at = Vector3.Dot(Vertices[end].Position, along);
+            Vector3[] near = [.. gun.Select(i => Vertices[i].Position).Where(p => Math.Abs(Vector3.Dot(p, along) - at) < span * 0.1f)];
+            Vector3 extent = near.Aggregate(new Vector3(float.MinValue), Vector3.Max) - near.Aggregate(new Vector3(float.MaxValue), Vector3.Min);
+            return (extent - (along * Vector3.Dot(extent, along))).Length();
+        }
+
+        return Thickness(first) < Thickness(last) ? (first, last) : (last, first);
+    }
+
     /// <summary>Gets the standing clip.</summary>
     public ModernClip Idle { get; private set; } = ModernClip.None;
 
@@ -92,7 +224,53 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="ahead">How far ahead the shooter was, along the ground, unit length with <paramref name="right"/>.</param>
     /// <param name="right">How far to the right.</param>
     /// <returns>The flinch, or null where the file has none.</returns>
-    public ModernClip? Hit(float ahead, float right)
+    public ModernClip? Hit(float ahead, float right) => Hit(ahead, right, zone: -1, heavy: false);
+
+    /// <summary>Gets the reactions read from the file (<c>react_...</c>), by name.</summary>
+    public Dictionary<string, ModernClip> Reacts { get; } = [];
+
+    /// <summary>Gets, for each node, whether it is an arm's (a shoulder or below), which a layered reaction leaves to the rifle.</summary>
+    public bool[] ArmNodes { get; private set; } = [];
+
+    /// <summary>
+    /// Gets the reaction for a round: a headshot's for the head or neck; the gut's for a heavy one in the body from ahead;
+    /// otherwise the one from the side the shooter was on, the big one when the round was heavy. Falls back to the rifle
+    /// flinches (<see cref="Hits"/>) where the file has no reactions.
+    /// </summary>
+    /// <param name="ahead">How far ahead the shooter was, along the ground, unit length with <paramref name="right"/>.</param>
+    /// <param name="right">How far to the right.</param>
+    /// <param name="zone">The original's hit zone, or -1 for any.</param>
+    /// <param name="heavy">Whether the round was a heavy one (it came hard on the heels of another).</param>
+    /// <returns>The reaction, or null where the file has none.</returns>
+    public ModernClip? Hit(float ahead, float right, int zone, bool heavy)
+    {
+        string side = ahead < -0.5f ? "back" : Math.Abs(right) > 0.7f ? (right > 0f ? "right" : "left") : "front";
+        string? name = zone is 15 or 16 ? "react_head"
+            : zone is >= 12 and <= 14 && heavy && side == "front" ? "react_gut"
+            : zone >= 0 ? (heavy ? $"react_{side}_big" : $"react_{side}") : null;
+        if (name is not null && (Reacts.GetValueOrDefault(name) ?? Reacts.GetValueOrDefault($"react_{side}")) is { } react)
+        {
+            return react;
+        }
+
+        return HitOld(ahead, right);
+    }
+
+    // A node under either shoulder.
+    private bool IsArm(int node)
+    {
+        for (int at = node; at >= 0; at = Parents[at])
+        {
+            if (Names[at] is "mixamorig:LeftShoulder" or "mixamorig:RightShoulder")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private ModernClip? HitOld(float ahead, float right)
     {
         ModernClip? side = right > 0f ? Hits.Right : Hits.Left;
         return ahead < -0.5f && Hits.Back is { } back ? back
@@ -161,6 +339,18 @@ internal sealed class ModernBodyAsset : IDisposable
                 : null;
         asset.Hits = (Flinch("hit_front"), Flinch("hit_back"), Flinch("hit_left"), Flinch("hit_right"));
 
+        // The unarmed reactions, played on everything but the arms, which stay on the rifle.
+        foreach (string name in new[] { "react_front", "react_back", "react_left", "react_right", "react_front_big", "react_back_big", "react_left_big", "react_right_big", "react_head", "react_gut" })
+        {
+            if (Flinch(name) is { } react)
+            {
+                react.Layered = true;
+                asset.Reacts[name] = react;
+            }
+        }
+
+        asset.ArmNodes = [.. Enumerable.Range(0, asset.Names.Length).Select(asset.IsArm)];
+
         return asset;
     }
 
@@ -208,8 +398,10 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="hit">A flinch played over the rest, or null.</param>
     /// <param name="hitTime">Where in the flinch.</param>
     /// <param name="hitWeight">How much of the flinch.</param>
-    public void Pose(in ModernMix now, in ModernMix before, float fade, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit, float hitTime, float hitWeight) =>
-        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight);
+    /// <param name="kicks">Each node's kick (<see cref="ModernBody.Kick"/>), a turn about its joint in glTF's world: the axis times the angle in radians.</param>
+    public void Pose(
+        in ModernMix now, in ModernMix before, float fade, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit, float hitTime, float hitWeight, Vector3[]? kicks = null) =>
+        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight, kicks);
 
     /// <summary>Poses the skeleton in one fall, held on its last frame once it has run.</summary>
     /// <param name="fall">The fall (<see cref="Death"/>).</param>
@@ -230,7 +422,8 @@ internal sealed class ModernBodyAsset : IDisposable
         Matrix4x4[] skin,
         ModernClip? over = null,
         float overTime = 0f,
-        float overWeight = 0f)
+        float overWeight = 0f,
+        Vector3[]? kicks = null)
     {
         for (int node = 0; node < Rest.Length; node++)
         {
@@ -244,7 +437,23 @@ internal sealed class ModernBodyAsset : IDisposable
             }
 
             // A flinch over whatever he is doing, its own slide taken out like a fall's.
-            if (over is not null && overWeight > 0f)
+            if (over is not null && overWeight > 0f && over.Layered && !ArmNodes[node])
+            {
+                // A layered reaction is added, not swapped in: only how it moves away from its own first frame, on top of
+                // whatever stance he is in, so the rifle stance keeps its facing and the jolt, twist and stumble are added.
+                (Vector3 T, Quaternion R, Vector3 S) from = over.Sample(node, 0f, Rest[node]);
+                (Vector3 T, Quaternion R, Vector3 S) to = over.Sample(node, overTime, Rest[node]);
+                Quaternion turn = Quaternion.Normalize(Quaternion.Inverse(from.R) * to.R);
+                r = Quaternion.Normalize(r * Quaternion.Slerp(Quaternion.Identity, turn, overWeight));
+                Vector3 shift = to.T - from.T;
+                if (node == over.TravelNode)
+                {
+                    shift -= over.TravelAt(overTime);
+                }
+
+                t += shift * overWeight;
+            }
+            else if (over is not null && overWeight > 0f && !over.Layered)
             {
                 (Vector3 T, Quaternion R, Vector3 S) h = over.Sample(node, overTime, Rest[node]);
                 if (node == over.TravelNode)
@@ -259,6 +468,15 @@ internal sealed class ModernBodyAsset : IDisposable
 
             Matrix4x4 local = Matrix4x4.CreateScale(s) * Matrix4x4.CreateFromQuaternion(r) * Matrix4x4.CreateTranslation(t);
             world[node] = Parents[node] < 0 ? local : local * world[Parents[node]];
+
+            // A round's kick turns the node about its own joint, after the clips have posed it; its children follow.
+            if (kicks is not null && kicks[node].LengthSquared() > 1e-8f)
+            {
+                float angle = kicks[node].Length();
+                Vector3 pivot = world[node].Translation;
+                world[node] = world[node] * Matrix4x4.CreateTranslation(-pivot)
+                    * Matrix4x4.CreateFromAxisAngle(kicks[node] / angle, angle) * Matrix4x4.CreateTranslation(pivot);
+            }
         }
 
         for (int j = 0; j < Joints.Length; j++)
@@ -437,6 +655,8 @@ internal sealed class ModernBodyAsset : IDisposable
         Weights = [.. skin];
         Indices = [.. indices];
         Subsets = [.. subsets];
+        GunVertices = [.. Subsets.Where(s => s.Gun).SelectMany(s => Indices.Skip(s.IndexOffset).Take(s.IndexCount)).Select(i => (int)i).Distinct()];
+        GunEnds = FindGunEnds();
         LowestY = Vertices.Min(v => v.Position.Y);
     }
 
@@ -532,6 +752,9 @@ internal sealed class ModernClip
     private Vector3 _travel;
     private Vector3 _up;
     private bool _falls;
+
+    /// <summary>Gets or sets a value indicating whether the clip is played over everything but the arms, which keep the rifle.</summary>
+    public bool Layered { get; set; }
 
     /// <summary>Gets how fast a moving clip covers ground, in metres a second, as the character's skeleton scales it.</summary>
     public float MetresPerSecond { get; internal set; }

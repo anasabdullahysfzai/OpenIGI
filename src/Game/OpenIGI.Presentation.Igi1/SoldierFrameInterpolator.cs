@@ -182,6 +182,22 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
                     hand = armed.AttachmentPosition;
                     rotation = armed.AttachmentRotation;
                 }
+                else if (member.Modern is { Fallen: false, GunEnds: { } ends } && member.Weapon is { } held)
+                {
+                    // A modern body's own rifle (g_modern_bodies): the original's gun, which is not drawn, is laid along it with its
+                    // muzzle on that rifle's, so its flame comes out of the rifle the player sees. Its barrel is its +Y, its top +Z.
+                    System.Numerics.Vector3 barrel = System.Numerics.Vector3.Normalize(ends.Muzzle - ends.Stock);
+                    System.Numerics.Vector3 top = System.Numerics.Vector3.Normalize(
+                        System.Numerics.Vector3.UnitZ - (barrel * System.Numerics.Vector3.Dot(barrel, System.Numerics.Vector3.UnitZ)));
+                    System.Numerics.Vector3 side = System.Numerics.Vector3.Cross(barrel, top);
+                    Vector3f muzzle = held.Muzzle;
+                    System.Numerics.Vector3 origin = ends.Muzzle - (side * muzzle.X) - (barrel * muzzle.Y) - (top * muzzle.Z);
+                    float units = (float)WorldScene.UnitsPerMetre;
+                    hand = new Vector3f(origin.X * units, origin.Y * units, origin.Z * units);
+                    // Columns: where each of the gun's own axes goes, as the hand's turn is read (orientation * turn) -- its side,
+                    // its barrel, its top.
+                    rotation = new Matrix3f(side.X, barrel.X, top.X, side.Y, barrel.Y, top.Y, side.Z, barrel.Z, top.Z);
+                }
                 member.PrevTickHandPosition = member.HasHandState ? member.TickHandPosition : hand;
                 member.PrevTickHandRotation = member.HasHandState ? member.TickHandRotation : rotation;
                 member.TickHandPosition = hand;

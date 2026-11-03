@@ -805,6 +805,15 @@ public sealed partial class Igi1HumanAi
             Vector3d mark = human.Candidate.Mark;
             int looked = human.Candidate.Id;
             bool gated = modern && human.Candidate.OtherSide;
+
+            // dev_notarget: the player is not there to be seen.
+            if (GameplayCVars.NoTarget.Value && looked == AiDetectionCandidate.PlayerId)
+            {
+                human.Slot.IsVisible = false;
+                human.SeesRaw = false;
+                continue;
+            }
+
             if (gated)
             {
                 // The sweep's cooldowns keep the visible flag between its tests: hand it back what it last said, not the gate's.
