@@ -171,6 +171,9 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
         }
 
         view.PlaceAt(view.Position, Matrix3f.FromEngineEulerAngles(0f, 0f, facing));
+        view.KillShot = (
+            (forward.X * travel.X) + (forward.Y * travel.Y) > 0.0,
+            hit.Zone is SoldierDeath.HeadZone or SoldierDeath.NeckZone);
         view.Kill(animation);
 
         if (brain is not null)
@@ -279,7 +282,7 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
             }
             else
             {
-                ReactToHit(struck, brain, hit.Zone, dealt, explosion: false);
+                ReactToHit(struck, brain, hit.Zone, dealt, explosion: false, from: origin);
             }
         }
 
@@ -352,7 +355,7 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
             }
             else
             {
-                ReactToHit(struckView, brain, hit.Zone, dealt, explosion: false);
+                ReactToHit(struckView, brain, hit.Zone, dealt, explosion: false, from: round.Origin);
                 if (round.Category == WeaponCategory.Knife && struckView.Soldier.Class.SoundsKnifeStab)
                 {
                     _scriptSound(KnifeStabSound, struckView.Position, () => struckView.Position);
@@ -409,7 +412,7 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
                 return;
             }
 
-            ReactToHit(struckView, brain, zone, dealt, explosion: false);
+            ReactToHit(struckView, brain, zone, dealt, explosion: false, from: attacker.Position);
         }
 
         brain?.ReceiveDamage(attacker.Position, attacker.Soldier.Id);
@@ -512,8 +515,13 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
     /// Every hit handler plays the grunt on the non-lethal branch, and an explosion only when it made the
     /// soldier react (<c>0x45A3D0</c>). The flinch is the bit the handlers raise for the body machine.
     /// </remarks>
-    private void ReactToHit(SoldierView soldier, Igi1HumanAi? brain, int zone, float dealt, bool explosion)
+    private void ReactToHit(SoldierView soldier, Igi1HumanAi? brain, int zone, float dealt, bool explosion, Vector3d? from = null)
     {
+        if (from is { } source)
+        {
+            soldier.NoteHit(source, zone);
+        }
+
         if (!_recoil.TryGetValue(soldier, out HumanRecoil? recoil))
         {
             float? configured = _context.Combat.TryGetValue(soldier, out AiCombatParameters? row) ? row.RecoilThreshold : null;

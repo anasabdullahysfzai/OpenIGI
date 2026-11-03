@@ -64,6 +64,35 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the walking clip, travel taken out.</summary>
     public ModernClip Walk { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets the falls, by shot from behind then headshot, each null where the file has none.</summary>
+    /// <remarks>Named <c>death_front</c>, <c>death_back</c>, <c>death_front_head</c> and <c>death_back_head</c>; played once and held.</remarks>
+    public ModernClip?[,] Deaths { get; private set; } = new ModernClip?[2, 2];
+
+    /// <summary>Gets the flinches, each null where the file has none: <c>hit_front</c>, <c>hit_back</c>, <c>hit_left</c>, <c>hit_right</c>.</summary>
+    public (ModernClip? Front, ModernClip? Back, ModernClip? Left, ModernClip? Right) Hits { get; private set; }
+
+    /// <summary>Gets the flinch for a round, by where its shooter was: behind, to one side, else ahead.</summary>
+    /// <param name="ahead">How far ahead the shooter was, along the ground, unit length with <paramref name="right"/>.</param>
+    /// <param name="right">How far to the right.</param>
+    /// <returns>The flinch, or null where the file has none.</returns>
+    public ModernClip? Hit(float ahead, float right)
+    {
+        ModernClip? side = right > 0f ? Hits.Right : Hits.Left;
+        return ahead < -0.5f && Hits.Back is { } back ? back
+            : Math.Abs(right) > 0.7f && side is not null ? side
+            : Hits.Front;
+    }
+
+    /// <summary>Gets the fall for a killing shot: its own if the file has it, else the plain one from that side, else any.</summary>
+    /// <param name="fromBehind">Whether the round came from behind.</param>
+    /// <param name="headshot">Whether it struck the head or neck.</param>
+    /// <returns>The fall, or null where the file has none.</returns>
+    public ModernClip? Death(bool fromBehind, bool headshot)
+    {
+        int side = fromBehind ? 1 : 0, head = headshot ? 1 : 0;
+        return Deaths[side, head] ?? Deaths[side, 0] ?? Deaths[1 - side, 0];
+    }
+
     /// <summary>Reads a character, uploading its textures.</summary>
     /// <param name="device">The device its textures live on.</param>
     /// <param name="path">The <c>.glb</c> file.</param>
@@ -85,6 +114,23 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.Idle = ModernClip.Read(Find(model, "idle", path), index, asset.Rest.Length, travelling: false);
         asset.Walk = ModernClip.Read(Find(model, "walk", path), index, asset.Rest.Length, travelling: true);
         asset.WalkMetresPerSecond = ModernBody.WalkSpeed(asset);
+
+        // The fall's root keeps its drop but not its slide: the soldier's own death clip already moves him along the ground.
+        Vector3 up = asset.UpOf(asset.Walk.TravelNode);
+        foreach ((int side, int head, string name) in new[] { (0, 0, "death_front"), (1, 0, "death_back"), (0, 1, "death_front_head"), (1, 1, "death_back_head") })
+        {
+            if (model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } fall)
+            {
+                asset.Deaths[side, head] = ModernClip.ReadFall(fall, index, asset.Rest.Length, up);
+            }
+        }
+
+        ModernClip? Flinch(string name) =>
+            model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
+                ? ModernClip.ReadFall(clip, index, asset.Rest.Length, up)
+                : null;
+        asset.Hits = (Flinch("hit_front"), Flinch("hit_back"), Flinch("hit_left"), Flinch("hit_right"));
+
         return asset;
     }
 
@@ -113,20 +159,64 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="walkWeight">How much of the walk, nought (all idle) to one (all walk).</param>
     /// <param name="world">Each node's world matrix, written.</param>
     /// <param name="skin">Each joint's skinning matrix, written.</param>
-    public void Pose(float idleTime, float walkTime, float walkWeight, Matrix4x4[] world, Matrix4x4[] skin)
+    /// <param name="hit">A flinch played over the rest, or null.</param>
+    /// <param name="hitTime">Where in the flinch.</param>
+    /// <param name="hitWeight">How much of the flinch.</param>
+    public void Pose(
+        float idleTime, float walkTime, float walkWeight, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit = null, float hitTime = 0f, float hitWeight = 0f) =>
+        Blend(Idle, idleTime, Walk, walkTime, walkWeight, world, skin, hit, hitTime, hitWeight);
+
+    /// <summary>Poses the skeleton in one fall, held on its last frame once it has run.</summary>
+    /// <param name="fall">The fall (<see cref="Death"/>).</param>
+    /// <param name="time">How long since the soldier died, in seconds.</param>
+    /// <param name="world">Each node's world matrix, written.</param>
+    /// <param name="skin">Each joint's skinning matrix, written.</param>
+    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin) =>
+        Blend(fall, time, fall, time, 0f, world, skin);
+
+    private void Blend(
+        ModernClip first,
+        float firstTime,
+        ModernClip second,
+        float secondTime,
+        float weight,
+        Matrix4x4[] world,
+        Matrix4x4[] skin,
+        ModernClip? over = null,
+        float overTime = 0f,
+        float overWeight = 0f)
     {
         for (int node = 0; node < Rest.Length; node++)
         {
-            (Vector3 T, Quaternion R, Vector3 S) a = Idle.Sample(node, idleTime, Rest[node]);
-            (Vector3 T, Quaternion R, Vector3 S) b = walkWeight > 0f ? Walk.Sample(node, walkTime, Rest[node]) : a;
-            Vector3 t = Vector3.Lerp(a.T, b.T, walkWeight);
-            Quaternion r = Quaternion.Slerp(a.R, b.R, walkWeight);
-            Vector3 s = Vector3.Lerp(a.S, b.S, walkWeight);
+            (Vector3 T, Quaternion R, Vector3 S) a = first.Sample(node, firstTime, Rest[node]);
+            (Vector3 T, Quaternion R, Vector3 S) b = weight > 0f ? second.Sample(node, secondTime, Rest[node]) : a;
+            Vector3 t = Vector3.Lerp(a.T, b.T, weight);
+            Quaternion r = Quaternion.Slerp(a.R, b.R, weight);
+            Vector3 s = Vector3.Lerp(a.S, b.S, weight);
 
-            // The walk's travel comes off its root, along the ground: the soldier's own move carries the body.
-            if (node == Walk.TravelNode && walkWeight > 0f)
+            // A clip's travel comes off its root, along the ground: the soldier's own move carries the body.
+            if (node == first.TravelNode)
             {
-                t -= Walk.TravelAt(walkTime) * walkWeight;
+                t -= first.TravelAt(firstTime) * (1f - weight);
+            }
+
+            if (node == second.TravelNode && weight > 0f)
+            {
+                t -= second.TravelAt(secondTime) * weight;
+            }
+
+            // A flinch over whatever he is doing, its own slide taken out like a fall's.
+            if (over is not null && overWeight > 0f)
+            {
+                (Vector3 T, Quaternion R, Vector3 S) h = over.Sample(node, overTime, Rest[node]);
+                if (node == over.TravelNode)
+                {
+                    h.T -= over.TravelAt(overTime);
+                }
+
+                t = Vector3.Lerp(t, h.T, overWeight);
+                r = Quaternion.Slerp(r, h.R, overWeight);
+                s = Vector3.Lerp(s, h.S, overWeight);
             }
 
             Matrix4x4 local = Matrix4x4.CreateScale(s) * Matrix4x4.CreateFromQuaternion(r) * Matrix4x4.CreateTranslation(t);
@@ -189,6 +279,23 @@ internal sealed class ModernBodyAsset : IDisposable
     private static GltfAnimation Find(ModelRoot model, string name, string path) =>
         model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase))
         ?? throw new InvalidDataException($"{path} holds no clip named '{name}'.");
+
+    // The up direction in a node's parent's frame, at rest: what a fall's slide along the ground is measured against.
+    private Vector3 UpOf(int node)
+    {
+        int parent = node >= 0 ? Parents[node] : -1;
+        if (parent < 0)
+        {
+            return Vector3.UnitY;
+        }
+
+        Matrix4x4[] world = new Matrix4x4[Rest.Length];
+        Matrix4x4[] skin = new Matrix4x4[Joints.Length];
+        Pose(0f, 0f, 0f, world, skin);
+        return Matrix4x4.Invert(world[parent], out Matrix4x4 inverse)
+            ? Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitY, inverse))
+            : Vector3.UnitY;
+    }
 
     // Every node of the default scene, parents first.
     private Dictionary<Node, int> ReadNodes(ModelRoot model)
@@ -294,6 +401,8 @@ internal sealed class ModernClip
     private ICurveSampler<Quaternion>?[] _rotations = [];
     private ICurveSampler<Vector3>?[] _scales = [];
     private Vector3 _travel;
+    private Vector3 _up;
+    private bool _falls;
 
     /// <summary>Gets how long the clip runs, in seconds.</summary>
     public float Duration { get; private init; }
@@ -356,6 +465,20 @@ internal sealed class ModernClip
         return clip;
     }
 
+    /// <summary>Reads a fall: played once and held, its root's slide along the ground taken out and its drop kept.</summary>
+    /// <param name="animation">The glTF animation.</param>
+    /// <param name="index">Each node's index in the asset.</param>
+    /// <param name="nodes">How many nodes the asset has.</param>
+    /// <param name="up">Up, in the root's parent's frame.</param>
+    /// <returns>The clip.</returns>
+    public static ModernClip ReadFall(GltfAnimation animation, Dictionary<Node, int> index, int nodes, Vector3 up)
+    {
+        ModernClip clip = Read(animation, index, nodes, travelling: false);
+        clip._falls = true;
+        clip._up = up;
+        return clip;
+    }
+
     /// <summary>Gets a node's local transform at a time, the clip wrapping round, or its rest for what the clip does not move.</summary>
     /// <param name="node">The node.</param>
     /// <param name="time">The time, in seconds.</param>
@@ -378,7 +501,24 @@ internal sealed class ModernClip
     /// <summary>Gets how much of the clip's travel has been made by a time within a run.</summary>
     /// <param name="time">The time, in seconds.</param>
     /// <returns>The travel so far.</returns>
-    public Vector3 TravelAt(float time) => _travel * (Wrap(time) / Duration);
+    public Vector3 TravelAt(float time)
+    {
+        if (!_falls)
+        {
+            return _travel * (Wrap(time) / Duration);
+        }
 
-    private float Wrap(float time) => time - (MathF.Floor(time / Duration) * Duration);
+        if (TravelNode < 0 || _translations[TravelNode] is not { } root)
+        {
+            return Vector3.Zero;
+        }
+
+        Vector3 moved = root.GetPoint(Wrap(time)) - root.GetPoint(0f);
+        return moved - (Vector3.Dot(moved, _up) * _up);
+    }
+
+    // A fall holds its last frame; anything else loops.
+    private float Wrap(float time) => _falls
+        ? Math.Clamp(time, 0f, Duration)
+        : time - (MathF.Floor(time / Duration) * Duration);
 }

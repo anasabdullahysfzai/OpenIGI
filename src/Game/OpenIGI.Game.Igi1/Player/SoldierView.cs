@@ -417,6 +417,30 @@ public sealed class SoldierView
     /// <summary>Gets a value indicating whether this soldier has been killed.</summary>
     public bool IsDead { get; private set; }
 
+    /// <summary>Gets or sets how the killing round struck: from behind, and in the head or neck. <b>Not retail</b>: read only by
+    /// the modern bodies, to fall the way the shot pushed.</summary>
+    public (bool FromBehind, bool Headshot) KillShot { get; set; }
+
+    /// <summary>Gets the last round that struck without killing: which way its shooter was, ahead and to the right in the body's
+    /// own frame (unit length along the ground), its zone, and how many have struck. <b>Not retail</b>: read only by the modern
+    /// bodies, to flinch the way the round pushed.</summary>
+    public (float Ahead, float Right, int Zone, int Count) LastHit { get; private set; }
+
+    /// <summary>Notes a round that struck without killing (<see cref="LastHit"/>).</summary>
+    /// <param name="from">Where it came from.</param>
+    /// <param name="zone">The zone it struck.</param>
+    public void NoteHit(Vector3d from, int zone)
+    {
+        double dx = from.X - Position.X, dy = from.Y - Position.Y;
+        double length = Math.Max(Math.Sqrt((dx * dx) + (dy * dy)), 1e-6);
+        Matrix3f m = Orientation;
+        LastHit = (
+            (float)(((m.M12 * dx) + (m.M22 * dy)) / length),
+            (float)(((m.M11 * dx) + (m.M21 * dy)) / length),
+            zone,
+            LastHit.Count + 1);
+    }
+
     /// <summary>Gets the animation currently playing on bone 0.</summary>
     public int CurrentAnimation { get; private set; }
 

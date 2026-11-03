@@ -1,5 +1,8 @@
 using OpenIGI.Core.Diagnostics;
 using OpenIGI.Game;
+using OpenIGI.Game.Igi1.Ai;
+using OpenIGI.Game.Igi1.Player;
+using OpenIGI.Game.World;
 
 namespace OpenIGI.Presentation.Igi1;
 
@@ -16,16 +19,27 @@ public sealed partial class SoldierRenderer
     private ModernBodyAsset? _modernAsset;
     private string? _modernAssetPath;
     private bool _modernAssetFailed;
+    private readonly Dictionary<SoldierMember, double> _modernFallHeights = [];
+    private readonly Dictionary<SoldierMember, double> _modernStandingHeights = [];
+    private readonly Dictionary<SoldierMember, float> _modernRootTops = [];
+    private readonly Dictionary<SoldierMember, int> _modernHitsSeen = [];
 
     /// <summary>Gives a soldier his modern body for this tick, or takes it away.</summary>
     /// <param name="group">The soldier's group, whose model stands him on the ground.</param>
     /// <param name="member">The soldier.</param>
     private void TickModernBody(SoldierGroup group, SoldierMember member)
     {
-        if (member.Agent.View.IsDead || ModernAsset() is not { } asset)
+        SoldierView view = member.Agent.View;
+        if (ModernAsset() is not { } asset || (view.IsDead && member.Modern is not { Fallen: true } && !StartFall(member, asset, view)))
         {
+            // Dead with no fall to play, or one that came back to life (a respawn): his own model, or a fresh body.
             DropModernBody(member);
             return;
+        }
+
+        if (!view.IsDead && member.Modern is { Fallen: true })
+        {
+            DropModernBody(member);
         }
 
         if (member.Modern is null)
@@ -34,13 +48,59 @@ public sealed partial class SoldierRenderer
             // skin scratch: until his first skinning succeeds that holds the model's raw geometry, in its own units.)
             member.Modern = new ModernBody(asset, _device);
             member.Modern.MatchLowest(group.Body.LowestVertexZ);
+            _modernHitsSeen[member] = view.LastHit.Count;
         }
 
         ModernBody body = member.Modern;
+        float raise = 0f;
+        if (!view.IsDead)
+        {
+            // A soldier with a brain is drawn at his clip's root height above the ground. His own flinch, kneel or crouch brings
+            // that down; the character only stands and walks, so the drop is given back and he stays on his feet. (Measured from
+            // the highest his root has stood, which is standing.)
+            if (_sim.Brains.TryGetValue(view, out Igi1HumanAi? brain) && brain.HasGroundQuery)
+            {
+                float top = Math.Max(_modernRootTops.GetValueOrDefault(member, view.RootSample.Z), view.RootSample.Z);
+                _modernRootTops[member] = top;
+                raise = (top - view.RootSample.Z) / (float)WorldScene.UnitsPerMetre;
+            }
+
+            _modernStandingHeights[member] = member.TickWhere.Z + raise;
+
+            // A round that struck without killing: the character's own flinch, the way it pushed him.
+            if (view.LastHit.Count != _modernHitsSeen.GetValueOrDefault(member))
+            {
+                _modernHitsSeen[member] = view.LastHit.Count;
+                if (asset.Hit(view.LastHit.Ahead, view.LastHit.Right) is { } hit)
+                {
+                    body.Flinch(hit);
+                }
+            }
+        }
+        else
+        {
+            // His own death clip brings where he is drawn down to the floor, and the character's fall its own hips: however far
+            // he is drawn lower than he stood is given back, or he would sink twice.
+            raise = (float)(_modernFallHeights.GetValueOrDefault(member, member.TickWhere.Z) - member.TickWhere.Z);
+        }
 
         double dx = member.TickWhere.X - member.PrevTickWhere.X, dy = member.TickWhere.Y - member.PrevTickWhere.Y;
         float moved = member.HasTickState ? (float)Math.Sqrt((dx * dx) + (dy * dy)) : 0f;
-        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f);
+        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise);
+    }
+
+    // The fall the killing shot calls for, started on the body he died in; false where there is none to play.
+    private bool StartFall(SoldierMember member, ModernBodyAsset asset, SoldierView view)
+    {
+        if (member.Modern is not { } body || asset.Death(view.KillShot.FromBehind, view.KillShot.Headshot) is not { } fall)
+        {
+            return false;
+        }
+
+        // The height he was drawn at standing, from the tick before: this tick's may already be his death clip's.
+        _modernFallHeights[member] = _modernStandingHeights.GetValueOrDefault(member, member.TickWhere.Z);
+        body.Fall(fall);
+        return true;
     }
 
     // The character, read the first time it is wanted and again whenever the file named changes; null while off or unreadable.

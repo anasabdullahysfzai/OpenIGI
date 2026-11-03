@@ -30,6 +30,12 @@ internal sealed class ModernBody : IDisposable
     private float _idleTime;
     private float _walkTime;
     private float _walkWeight;
+    private ModernClip? _fall;
+    private float _fallTime;
+    private float _fallRaise = float.NaN;
+    private float _floor;
+    private ModernClip? _hit;
+    private float _hitTime;
 
     /// <summary>Initializes a new instance of the <see cref="ModernBody"/> class, its mesh in the bind pose.</summary>
     /// <param name="asset">The character.</param>
@@ -58,11 +64,58 @@ internal sealed class ModernBody : IDisposable
     /// <summary>Gets the ground speed the body was last posed for, in metres a second.</summary>
     public float Speed { get; private set; }
 
+    /// <summary>How long a flinch takes to come in, and to go out at its end, in seconds.</summary>
+    public const float HitInSeconds = 0.1f, HitOutSeconds = 0.3f;
+
+    /// <summary>Starts a flinch over whatever the body is doing; a new one replaces one still playing.</summary>
+    /// <param name="hit">The flinch (<see cref="ModernBodyAsset.Hit"/>).</param>
+    public void Flinch(ModernClip hit)
+    {
+        _hit = hit;
+        _hitTime = 0f;
+    }
+
+    /// <summary>Gets a value indicating whether the body is falling, or lying where it fell.</summary>
+    public bool Fallen => _fall is not null;
+
+    /// <summary>Starts the body's fall, which every tick after plays once and then holds.</summary>
+    /// <param name="fall">The fall (<see cref="ModernBodyAsset.Death"/>).</param>
+    public void Fall(ModernClip fall)
+    {
+        _fall = fall;
+        _fallTime = 0f;
+    }
+
     /// <summary>Poses and skins the body for one tick of the soldier's movement.</summary>
     /// <param name="moved">How far the soldier moved this tick along the ground, in metres.</param>
     /// <param name="yaw">The character's extra turn about up, in radians.</param>
-    public void Tick(float moved, float yaw)
+    /// <param name="raise">How far to raise the body, in metres: what the soldier's own clip has lowered where he is drawn.</param>
+    public void Tick(float moved, float yaw, float raise = 0f)
     {
+        if (_fall is { } fall)
+        {
+            // Once it has lain a tick on its last frame, and he is drawn no lower, the mesh already holds it.
+            if (_fallTime > fall.Duration + TickSeconds && raise == _fallRaise)
+            {
+                return;
+            }
+
+            _fallTime += TickSeconds;
+            _fallRaise = raise;
+            _asset.PoseFall(fall, _fallTime, _world, _skin);
+            _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
+
+            // Nothing of him below the floor his feet stood on: a fall swings a hand or a knee lower than the feet were.
+            float under = _floor + raise - _vertices.Min(v => v.Position.Z);
+            if (under > 0f)
+            {
+                _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise + under, _vertices);
+            }
+
+            _device.UpdateAnimatedMesh(Mesh, _vertices);
+            return;
+        }
+
         Speed = moved / TickSeconds;
         bool walking = Speed >= StandingBelow;
         float step = TickSeconds / BlendSeconds;
@@ -75,8 +128,19 @@ internal sealed class ModernBody : IDisposable
         _walkTime += TickSeconds * pace;
         _idleTime += TickSeconds;
 
-        _asset.Pose(_idleTime, _walkTime, Smooth(_walkWeight), _world, _skin);
-        _asset.Skin(_skin, yaw, Lift ?? 0f, _vertices);
+        float hitWeight = 0f;
+        if (_hit is { } hit)
+        {
+            _hitTime += TickSeconds;
+            hitWeight = Smooth(Math.Clamp(Math.Min(_hitTime / HitInSeconds, (hit.Duration - _hitTime) / HitOutSeconds), 0f, 1f));
+            if (_hitTime >= hit.Duration)
+            {
+                _hit = null;
+            }
+        }
+
+        _asset.Pose(_idleTime, _walkTime, Smooth(_walkWeight), _world, _skin, _hit, _hitTime, hitWeight);
+        _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
         _device.UpdateAnimatedMesh(Mesh, _vertices);
     }
 
@@ -112,6 +176,7 @@ internal sealed class ModernBody : IDisposable
         }
 
         Lift = soldierLowest - lowest;
+        _floor = soldierLowest;
     }
 
     /// <inheritdoc/>
