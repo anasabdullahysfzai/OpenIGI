@@ -116,6 +116,18 @@ internal sealed class ModernBodyAsset : IDisposable
     public (int Shoulder, int Elbow, int Wrist) LeftArm =>
         (Array.IndexOf(Names, "mixamorig:LeftArm"), Array.IndexOf(Names, "mixamorig:LeftForeArm"), Array.IndexOf(Names, "mixamorig:LeftHand"));
 
+    /// <summary>Gets the spine's three nodes, low to high, then the neck and the head: what turns him to look and to aim.</summary>
+    public (int Spine, int Spine1, int Spine2, int Neck, int Head) Torso =>
+        (Array.IndexOf(Names, "mixamorig:Spine"), Array.IndexOf(Names, "mixamorig:Spine1"), Array.IndexOf(Names, "mixamorig:Spine2"),
+         Array.IndexOf(Names, "mixamorig:Neck"), Array.IndexOf(Names, "mixamorig:Head"));
+
+    /// <summary>Gets each leg's hip, knee and ankle nodes, left then right.</summary>
+    public (int Hip, int Knee, int Ankle)[] Legs =>
+    [
+        (Array.IndexOf(Names, "mixamorig:LeftUpLeg"), Array.IndexOf(Names, "mixamorig:LeftLeg"), Array.IndexOf(Names, "mixamorig:LeftFoot")),
+        (Array.IndexOf(Names, "mixamorig:RightUpLeg"), Array.IndexOf(Names, "mixamorig:RightLeg"), Array.IndexOf(Names, "mixamorig:RightFoot")),
+    ];
+
     /// <summary>Gets the right arm's shoulder, elbow and wrist nodes.</summary>
     public (int Shoulder, int Elbow, int Wrist) RightArm =>
         (Array.IndexOf(Names, "mixamorig:RightArm"), Array.IndexOf(Names, "mixamorig:RightForeArm"), Array.IndexOf(Names, "mixamorig:RightHand"));
@@ -526,19 +538,22 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="hitTime">Where in the flinch.</param>
     /// <param name="hitWeight">How much of the flinch.</param>
     /// <param name="kicks">Each node's kick (<see cref="ModernBody.Kick"/>), a turn about its joint in glTF's world: the axis times the angle in radians.</param>
+    /// <param name="inertia">The blend from the clips before (<see cref="ModernInertia"/>), or null to fade from <paramref name="before"/>.</param>
     public void Pose(
-        in ModernMix now, in ModernMix before, float fade, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit, float hitTime, float hitWeight, Vector3[]? kicks = null) =>
-        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight, kicks);
+        in ModernMix now, in ModernMix before, float fade, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit, float hitTime, float hitWeight, Vector3[]? kicks = null,
+        ModernInertia? inertia = null) =>
+        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight, kicks, inertia);
 
     /// <summary>Poses the skeleton in one fall, held on its last frame once it has run.</summary>
     /// <param name="fall">The fall (<see cref="Death"/>).</param>
     /// <param name="time">How long since the soldier died, in seconds.</param>
     /// <param name="world">Each node's world matrix, written.</param>
     /// <param name="skin">Each joint's skinning matrix, written.</param>
-    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin)
+    /// <param name="inertia">The blend into the fall from what he was doing (<see cref="ModernInertia"/>), or null.</param>
+    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin, ModernInertia? inertia = null)
     {
         ModernMix mix = new(fall, time, fall, time, 0f);
-        Blend(mix, mix, 1f, world, skin);
+        Blend(mix, mix, 1f, world, skin, inertia: inertia);
     }
 
     private void Blend(
@@ -550,7 +565,8 @@ internal sealed class ModernBodyAsset : IDisposable
         ModernClip? over = null,
         float overTime = 0f,
         float overWeight = 0f,
-        Vector3[]? kicks = null)
+        Vector3[]? kicks = null,
+        ModernInertia? inertia = null)
     {
         for (int node = 0; node < Rest.Length; node++)
         {
@@ -593,6 +609,8 @@ internal sealed class ModernBodyAsset : IDisposable
                 s = Vector3.Lerp(s, h.S, overWeight);
             }
 
+            // From one clip to the next, the offset he had from the new one, dying away (ModernInertia).
+            inertia?.Apply(node, ref t, ref r);
             Matrix4x4 local = Matrix4x4.CreateScale(s) * Matrix4x4.CreateFromQuaternion(r) * Matrix4x4.CreateTranslation(t);
             world[node] = Parents[node] < 0 ? local : local * world[Parents[node]];
 
@@ -606,6 +624,7 @@ internal sealed class ModernBodyAsset : IDisposable
             }
         }
 
+        inertia?.Posed();
         for (int j = 0; j < Joints.Length; j++)
         {
             skin[j] = Joints[j].InverseBind * world[Joints[j].Node];
@@ -956,7 +975,30 @@ internal sealed class ModernClip
             clip._travel = root.GetPoint(clip.Duration) - root.GetPoint(0f);
         }
 
+        clip.Bake();
         return clip;
+    }
+
+    /// <summary>How many frames a second a clip is baked at, for sampling.</summary>
+    public const int BakedFramesPerSecond = 60;
+
+    private Vector3[]?[] _bakedT = [], _bakedS = [];
+    private Quaternion[]?[] _bakedR = [];
+
+    // Every node's curves sampled once at a fixed rate, so a pose is two array reads and a blend a node, not a key search in
+    // each curve -- and safe for several bodies to read at once.
+    private void Bake()
+    {
+        int frames = (int)MathF.Ceiling(Duration * BakedFramesPerSecond) + 1;
+        _bakedT = new Vector3[]?[_translations.Length];
+        _bakedR = new Quaternion[]?[_rotations.Length];
+        _bakedS = new Vector3[]?[_scales.Length];
+        for (int node = 0; node < _rotations.Length; node++)
+        {
+            _bakedT[node] = _translations[node] is { } t ? [.. Enumerable.Range(0, frames).Select(f => t.GetPoint(Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+            _bakedR[node] = _rotations[node] is { } r ? [.. Enumerable.Range(0, frames).Select(f => r.GetPoint(Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+            _bakedS[node] = _scales[node] is { } sc ? [.. Enumerable.Range(0, frames).Select(f => sc.GetPoint(Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+        }
     }
 
     /// <summary>Reads a fall: played once and held, its root's slide along the ground taken out and its drop kept.</summary>
@@ -985,11 +1027,15 @@ internal sealed class ModernClip
             return rest;
         }
 
-        float t = Wrap(time);
+        // Between the two baked frames either side of the time.
+        float at = Wrap(time) * BakedFramesPerSecond;
+        int i = Math.Max(0, (int)at);
+        float f = at - i;
+        static int Next(int i, int length) => Math.Min(i + 1, length - 1);
         return (
-            _translations[node]?.GetPoint(t) ?? rest.T,
-            _rotations[node]?.GetPoint(t) ?? rest.R,
-            _scales[node]?.GetPoint(t) ?? rest.S);
+            _bakedT[node] is { } t ? Vector3.Lerp(t[Math.Min(i, t.Length - 1)], t[Next(i, t.Length)], f) : rest.T,
+            _bakedR[node] is { } r ? Quaternion.Normalize(Quaternion.Lerp(r[Math.Min(i, r.Length - 1)], r[Next(i, r.Length)], f)) : rest.R,
+            _bakedS[node] is { } sc ? Vector3.Lerp(sc[Math.Min(i, sc.Length - 1)], sc[Next(i, sc.Length)], f) : rest.S);
     }
 
     /// <summary>Gets how much of the clip's travel has been made by a time within a run.</summary>

@@ -5,7 +5,9 @@ using OpenIGI.Game.Igi1.Ai;
 using OpenIGI.Game.Igi1.Player;
 using OpenIGI.Game.Player;
 using OpenIGI.Game.World;
+using OpenIGI.Core.Numerics;
 using Vector2 = System.Numerics.Vector2;
+using Vector3 = System.Numerics.Vector3;
 
 namespace OpenIGI.Presentation.Igi1;
 
@@ -153,16 +155,30 @@ public sealed partial class SoldierRenderer
         }
 
         // Strafing, the way he goes against the way he faces (the brain's forward is -sin, cos of its facing).
-        Vector2 heading = default;
-        if (fighter is { Strafing: true } && moved > 0f)
+        // His step this tick against the way he faces, ahead and right (the brain's forward is -sin, cos of its facing): what
+        // the planted feet are held against, and strafing, which way he goes.
+        Vector2 step = default, heading = default;
+        if (fighter is not null && moved > 0f)
         {
             float f = fighter.Facing;
             float ahead = (float)((-dx * Math.Sin(f)) + (dy * Math.Cos(f))), right = (float)((dx * Math.Cos(f)) + (dy * Math.Sin(f)));
-            heading = Vector2.Normalize(new Vector2(ahead, right));
+            step = new Vector2(ahead, right);
+            heading = fighter.Strafing ? Vector2.Normalize(step) : default;
+        }
+
+        // What he looks at, from his eyes, in his own frame: the man he fights, where he aims at him; or one he watches.
+        Vector3 look = default;
+        if (fighter is not null && !view.IsDead && (aiming || fighter.WatchingPlayer) && fighter.TargetFeet != default)
+        {
+            Vector3d at = aiming ? fighter.TargetAimPoint / WorldScene.UnitsPerMetre
+                : (fighter.TargetFeet / WorldScene.UnitsPerMetre) + new Vector3d(0, 0, 1.5);
+            Vector3d from = member.TickWhere + new Vector3d(0, 0, 1.55);
+            double lx = at.X - from.X, ly = at.Y - from.Y, f = fighter.Facing;
+            look = new Vector3((float)((lx * Math.Cos(f)) + (ly * Math.Sin(f))), (float)((-lx * Math.Sin(f)) + (ly * Math.Cos(f))), (float)(at.Z - from.Z));
         }
 
         body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming, member.Agent.ShotSequence, kneeling, keepsDown, turning,
-            crouched: fighter?.CrouchMoving ?? false, heading);
+            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look);
         if (GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(
@@ -272,13 +288,25 @@ public sealed partial class SoldierRenderer
         if (heading != Vector2.Zero || forced == "crouch_walk")
         {
             ModernClip clip = forced switch { "strafe_left" => asset.StrafeLeft, "strafe_right" => asset.StrafeRight, "walk_back" => asset.WalkBack, _ => asset.CrouchWalk };
-            body.Tick(clip.MetresPerSecond * tick, yaw, 0f, aiming: true, 0, crouched: forced == "crouch_walk", heading: heading);
+            // At the modern AI's own paces for each, which the planted feet are held against.
+            float pace = forced switch { "crouch_walk" => 1.2f, "walk_back" => 1.86f, _ => 3.0f };
+            Vector2 way = heading == Vector2.Zero ? new Vector2(1f, 0f) : heading;
+            body.Tick(pace * tick, yaw, 0f, aiming: true, 0, crouched: forced == "crouch_walk", heading: heading, travel: way * pace * tick);
             return;
         }
 
         bool aiming = forced is "aim" or "fire" or "aim_walk" or "kneel_aim" || forced.StartsWith("turn_", StringComparison.Ordinal);
+        Vector2 travel = moved > 0f ? new Vector2(moved, 0f) : default;
         int shots = forced == "fire" ? ++_modernForcedTicks / 10 : 0;
-        body.Tick(moved, yaw, 0f, aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning);
+        // aim_up: aiming at a man 30 degrees above; look_right: watching one 60 degrees to his right.
+        Vector3 look = forced switch
+        {
+            "aim_up" => new Vector3(0f, 1f, MathF.Tan(MathF.PI / 6f)),
+            "look_right" => new Vector3(MathF.Sin(MathF.PI / 3f), MathF.Cos(MathF.PI / 3f), 0f),
+            _ => default,
+        };
+        aiming |= forced == "aim_up";
+        body.Tick(moved, yaw, 0f, aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look);
     }
 
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.

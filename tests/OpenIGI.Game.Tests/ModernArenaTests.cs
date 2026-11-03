@@ -33,6 +33,57 @@ public sealed class ModernArenaTests(ITestOutputHelper output)
         Assert.True(sure < 13 + 30, $"he took {sure / 30.0:0.00}s to fight back");
     }
 
+    /// <summary>
+    /// The player shows himself and fires, then goes behind a tall wall and stays there: the guard should flush him out with a
+    /// grenade. And under heavy fire, down in cover, he should stay pinned.
+    /// </summary>
+    [RequiresGameDataTheory]
+    [InlineData("grenade")]
+    [InlineData("pinned")]
+    public void PressureFlushesAndPins(string which)
+    {
+        bool previous = GameplayCVars.ModernAi.Value;
+        GameplayCVars.ModernAi.Value = true;
+        try
+        {
+            // A tall wall the player hides behind, and low walls and a pillar the guard can fight from.
+            ModernArena arena = new ModernArena()
+                .Box(12, 19, 0, 18, 19.6, 3.0)
+                .Box(12, 9, 0, 18, 9.6, 1.0)
+                .Box(19.5, 9, 0, 20.5, 10, 3.0)
+                .Box(16, 8, 0, 20, 8.6, 3.0);       // a short tall wall near him, between him and the player
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Igi1HumanAi soldier = arena.Patrol(ModernArena.At(15, 5), 0f, text => story.Add($"{tick / 30.0:0.00}s {text}"));
+            double most = 0.0;
+            for (tick = 1; tick <= 20 * 30; tick++)
+            {
+                // Out at the wall's end for three seconds, then behind it (grenade); or out in view, firing hard (pinned).
+                bool hiding = which == "grenade" && tick > 90;
+                Vector3d feet = hiding ? ModernArena.At(15, 21) : ModernArena.At(10, 21);
+                Vector3d eye = feet + new Vector3d(0, 0, 1.6 * Metre);
+                int every = which == "pinned" ? 10 : 15;
+                if (!hiding && tick % every == 0 && arena.Clear(eye, soldier.Position + new Vector3d(0, 0, 1.0 * Metre)))
+                {
+                    arena.Shoot(soldier, eye, soldier.Position + new Vector3d(0.8 * Metre, 0, 1.2 * Metre), heard: 30.0);
+                }
+
+                arena.Tick(soldier, tick, feet);
+                most = Math.Max(most, soldier.Suppression);
+            }
+
+            output.WriteLine($"{which}: most suppression {most:0.00}");
+            output.WriteLine(string.Join(Environment.NewLine, story.Where(l => !l.Contains("sees the player", StringComparison.Ordinal) && !l.Contains("lost sight", StringComparison.Ordinal))));
+            string wanted = which == "grenade" ? "throws a grenade" : "is pinned down";
+            Assert.Contains(story, line => line.Contains(wanted, StringComparison.Ordinal));
+        }
+        finally
+        {
+            GameplayCVars.ModernAi.Value = previous;
+        }
+    }
+
     /// <summary>Shot at from behind, or hit there: how long he takes to face the shooter and fight back.</summary>
     [RequiresGameDataTheory]
     [InlineData(false)]

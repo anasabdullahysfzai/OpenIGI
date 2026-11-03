@@ -19,6 +19,15 @@ public sealed class AiSquad
     private Igi1HumanAi? _flanker;
     private int _flankUntil;
 
+    /// <summary>Gets or sets when a member last threw a grenade, so the squad does not throw them in a shower.</summary>
+    public int GrenadeTick { get; set; } = int.MinValue / 2;
+
+    /// <summary>Whether a member other than this one is going round the player's side now: the rest keep him pinned.</summary>
+    /// <param name="soldier">The soldier asking.</param>
+    /// <param name="tick">The tick.</param>
+    public bool OtherFlanking(Igi1HumanAi soldier, int tick) =>
+        _flanker is { } flanker && flanker != soldier && tick - _members.GetValueOrDefault(flanker).Tick <= StaleTicks;
+
     /// <summary>Gets where the player was last seen by any member, and when; null before anyone has seen him.</summary>
     public (Vector3d Position, int Tick)? LastSeen { get; private set; }
 

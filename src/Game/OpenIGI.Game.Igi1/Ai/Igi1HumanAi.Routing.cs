@@ -224,6 +224,17 @@ public sealed partial class Igi1HumanAi
                 return false;
             }
 
+            // The modern AI curves through a corner: a waypoint with another after it is passed a metre short of it.
+            if (GameplayCVars.ModernAi.Value && _route.Count > 1 && !waypoint.Door
+                && Flat2(waypoint.Point, Position) < CornerMetres * GraphNode.MetreInUnits)
+            {
+                CurrentNode = waypoint.Node;
+                _route.RemoveAt(0);
+                _doorAtHop = null;
+                _doorSearched = false;
+                continue;
+            }
+
             AiMovementOutcome outcome = _steering.Step(
                 Position, Orientation, waypoint.Point, 0f, 0f, out AiSteeringFrame frame);
             LastSteeringForward = frame.Forward;

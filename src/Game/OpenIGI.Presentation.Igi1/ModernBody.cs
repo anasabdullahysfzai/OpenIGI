@@ -39,8 +39,7 @@ internal sealed class ModernBody : IDisposable
     private float _moveWeight;
     private ModernClip _stand;
     private ModernClip _move;
-    private ModernMix _before;
-    private float _fade = 1f;
+
     private bool _running;
     private int _shotsSeen;
     private float _firingFor;
@@ -61,7 +60,7 @@ internal sealed class ModernBody : IDisposable
         _asset = asset;
         _device = device;
         (_stand, _move) = (asset.Idle, asset.Walk);
-        _before = new ModernMix(asset.Idle, 0f, asset.Walk, 0f, 0f);
+        _inertia = new ModernInertia(asset.Rest.Length);
         _world = new Matrix4x4[asset.Rest.Length];
         _skin = new Matrix4x4[asset.Joints.Length];
         _vertices = new Vertex3D[asset.Vertices.Length];
@@ -249,7 +248,16 @@ internal sealed class ModernBody : IDisposable
     {
         _fall = fall;
         _fallTime = 0f;
+        _inertia.Begin = true;
     }
+
+    // The blends from clip to clip (ModernInertia), and how long since the moving clip last changed.
+    private readonly ModernInertia _inertia;
+    private float _sinceMoveChange;
+
+    /// <summary>The least time between one moving clip and the next, in seconds: a pace or a heading on a line flipped the
+    /// legs between two clips tick after tick.</summary>
+    public const float MoveHoldSeconds = 0.25f;
 
     /// <summary>Poses and skins the body for one tick of the soldier's movement.</summary>
     /// <param name="moved">How far the soldier moved this tick along the ground, in metres.</param>
@@ -262,20 +270,25 @@ internal sealed class ModernBody : IDisposable
     /// <param name="turning">How fast he turns about up, in radians a second, left positive.</param>
     /// <param name="crouched">Whether he moves crouched.</param>
     /// <param name="heading">Which way he moves against the way he faces, forward and right, when he moves facing elsewhere (strafing); zero otherwise.</param>
+    /// <param name="travel">How far he moved this tick, in metres, ahead and to his right: what the planted feet are held against.</param>
+    /// <param name="look">Where he looks, in the soldier's frame (x right, y ahead, z up), from his eyes; zero for nowhere in
+    /// particular. Aiming, his upper body bends to it; always, his head turns to it.</param>
     public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0, bool kneeling = false, bool keepsDown = false, float turning = 0f,
-        bool crouched = false, Vector2 heading = default)
+        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default)
     {
         if (_fall is { } fall)
         {
             // Once it has lain a tick on its last frame, and he is drawn no lower, the mesh already holds it.
             if (_fallTime > fall.Duration + TickSeconds && raise == _fallRaise)
             {
+                Keep(yaw, _keptLift);
                 return;
             }
 
             _fallTime += TickSeconds;
             _fallRaise = raise;
-            _asset.PoseFall(fall, _fallTime, _world, _skin);
+            _inertia.Step(TickSeconds);
+            _asset.PoseFall(fall, _fallTime, _world, _skin, _inertia);
             _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
 
             // Nothing of him below the floor his feet stood on: a fall swings a hand or a knee lower than the feet were.
@@ -286,6 +299,7 @@ internal sealed class ModernBody : IDisposable
             }
 
             _device.UpdateAnimatedMesh(Mesh, _vertices);
+            Keep(yaw, (Lift ?? 0f) + raise + Math.Max(0f, under));
             return;
         }
 
@@ -361,14 +375,20 @@ internal sealed class ModernBody : IDisposable
                 ? (heading.X >= 0f ? _asset.AimWalk : _asset.WalkBack)
                 : (heading.Y > 0f ? _asset.StrafeRight : _asset.StrafeLeft))
             : _running ? _asset.Run : aiming ? _asset.AimWalk : _asset.Walk;
-        if (!ReferenceEquals(stand, _stand) || !ReferenceEquals(move, _move))
+        // The moving clip held a moment once changed; its weight is the walk's, so a standing body does not wait on it.
+        _sinceMoveChange += TickSeconds;
+        if (!ReferenceEquals(move, _move) && _sinceMoveChange < MoveHoldSeconds && _moveWeight > 0f)
         {
-            // Faded from what was showing, held where it was; mid-fade, from whichever of the two showed more.
-            _before = _fade < 0.5f ? _before : Mix(_stand, _move);
-            (_stand, _move, _fade) = (stand, move, 0f);
+            move = _move;
         }
 
-        _fade = Math.Min(1f, _fade + (TickSeconds / BlendSeconds));
+        if (!ReferenceEquals(stand, _stand) || !ReferenceEquals(move, _move))
+        {
+            // From what was showing, by inertialization: the body carries on from where it was (ModernInertia).
+            _sinceMoveChange = ReferenceEquals(move, _move) ? _sinceMoveChange : 0f;
+            (_stand, _move) = (stand, move);
+            _inertia.Begin = true;
+        }
 
         // The moving clip is played at the soldier's pace, so its feet keep to the ground he covers; a change of gait keeps the
         // stride where it was.
@@ -377,7 +397,7 @@ internal sealed class ModernBody : IDisposable
             : 1f;
         _stride = (_stride + (TickSeconds * pace / move.Duration)) % 1f;
         Showing = FormattableString.Invariant(
-            $"speed {Speed:0.00} m/s, stand {Name(stand)}, move {Name(move)} x{Smooth(_moveWeight):0.00} at pace {pace:0.00}, fade {_fade:0.00}, legs {(_turnClip is { } legs && _turnWeight > 0f ? Name(legs) : "-")} x{Smooth(_turnWeight):0.00}");
+            $"speed {Speed:0.00} m/s, stand {Name(stand)}, move {Name(move)} x{Smooth(_moveWeight):0.00} at pace {pace:0.00}, legs {(_turnClip is { } legs && _turnWeight > 0f ? Name(legs) : "-")} x{Smooth(_turnWeight):0.00}");
         _standTime += TickSeconds;
 
         float hitWeight = 0f;
@@ -392,7 +412,11 @@ internal sealed class ModernBody : IDisposable
         }
 
         SpringKicks();
-        _asset.Pose(Mix(_stand, _move), _before, Smooth(_fade), _world, _skin, _hit, _hitTime, hitWeight, _kick.Length > 0 ? _kick : null);
+        ModernMix mix = Mix(_stand, _move);
+        _inertia.Step(TickSeconds);
+        _asset.Pose(mix, mix, 1f, _world, _skin, _hit, _hitTime, hitWeight, _kick.Length > 0 ? _kick : null, _inertia);
+        Look(look, aiming && _act is null);
+
         // The rifle rides its bone, where the clip's hands carried it with its stock seated in the shoulder (baked in the
         // build); the hands are brought back to it -- the right to its grip, the left to its handguard -- where they are near
         // enough to be meant to be on it, the left except while a reload or a throw has it away on purpose.
@@ -414,9 +438,235 @@ internal sealed class ModernBody : IDisposable
             }
         }
 
-        _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
-        _device.UpdateAnimatedMesh(Mesh, _vertices);
+        LockFeet(travel, turning * TickSeconds, kneeling || _act is not null);
+
+        // Drawn every frame (DrawAt), the tick only poses: skinning here too was thrown away by the next frame, and landed on
+        // the tick's frame all at once -- a frame in three twice as long as the others, a hitch thirty times a second. But only
+        // while frames are drawing him: where they stop -- the game draws its frames at the tick, unsmoothed, under a menu, a
+        // cutscene and the like -- the tick skins him again. Waiting on frames that never came froze him, sliding, in his last pose.
+        if (!_drawnSinceTick)
+        {
+            _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
+            _device.UpdateAnimatedMesh(Mesh, _vertices);
+        }
+
+        _drawnSinceTick = false;
+
+        Keep(yaw, (Lift ?? 0f) + raise);
     }
+
+    /// <summary>The most his upper body bends to aim up or down, and his head turns aside and up or down beyond it, in radians;
+    /// and how long a look takes to come in or go, in seconds.</summary>
+    public const float AimPitchMost = 0.9f, HeadYawMost = 1.2f, HeadPitchMost = 0.6f, LookBlendSeconds = 0.3f;
+
+    // How far into a look he is, nought to one, and the way he looks, eased toward the one asked.
+    private float _lookWeight;
+    private Vector3 _lookWay = new(0f, 1f, 0f);
+
+    /// <summary>Gets the angles his look last turned him by, in radians: the spine's pitch, and the head's yaw and pitch, for testing.</summary>
+    internal (float SpinePitch, float HeadYaw, float HeadPitch) LookForTesting { get; private set; }
+
+    /// <summary>
+    /// Turns him to what he looks at: aiming, the spine bent over three bones so the rifle -- its bone on the chest -- comes up
+    /// or down onto it with the arms, at a target above or below him; and the neck and head turned the rest of the way, aside
+    /// and up or down, whatever he does. The clips aim level, so on stairs or a slope he fired level with the rifle pointed off
+    /// the man he was shooting.
+    /// </summary>
+    private void Look(Vector3 look, bool aiming)
+    {
+        (int spine, int spine1, int spine2, int neck, int head) = _asset.Torso;
+        if (spine < 0 || spine1 < 0 || spine2 < 0 || neck < 0 || head < 0)
+        {
+            return;
+        }
+
+        bool looking = look.LengthSquared() > 1e-6f;
+        if (looking)
+        {
+            Vector3 way = Vector3.Normalize(look);
+            _lookWay = _lookWeight <= 0f ? way : Vector3.Normalize(Vector3.Lerp(_lookWay, way, 0.35f));
+        }
+
+        _lookWeight = Math.Clamp(_lookWeight + ((looking ? 1f : -1f) * TickSeconds / LookBlendSeconds), 0f, 1f);
+        float weight = Smooth(_lookWeight);
+        if (weight <= 0f)
+        {
+            LookForTesting = default;
+            return;
+        }
+
+        // In the soldier's frame: up-down from level, and aside from ahead (right positive).
+        float level = MathF.Sqrt((_lookWay.X * _lookWay.X) + (_lookWay.Y * _lookWay.Y));
+        float elevation = MathF.Atan2(_lookWay.Z, level);
+        float aside = MathF.Atan2(_lookWay.X, _lookWay.Y);
+
+        // glTF's world here: x his left, y up, z ahead. A pitch up is about his right (-x); a turn right is about -y.
+        Vector3 right = new(-1f, 0f, 0f);
+        float spinePitch = aiming ? Math.Clamp(elevation, -AimPitchMost, AimPitchMost) * weight : 0f;
+        if (spinePitch != 0f)
+        {
+            Turn(spine, Quaternion.CreateFromAxisAngle(right, spinePitch * 0.3f));
+            Turn(spine1, Quaternion.CreateFromAxisAngle(right, spinePitch * 0.3f));
+            Turn(spine2, Quaternion.CreateFromAxisAngle(right, spinePitch * 0.4f));
+        }
+
+        float headYaw = Math.Clamp(aside, -HeadYawMost, HeadYawMost) * weight;
+        float headPitch = Math.Clamp(elevation - spinePitch, -HeadPitchMost, HeadPitchMost) * weight;
+        foreach ((int node, float share) in new[] { (neck, 0.4f), (head, 0.6f) })
+        {
+            Quaternion turn = Quaternion.CreateFromAxisAngle(new Vector3(0f, -1f, 0f), headYaw * share);
+            Vector3 turnedRight = Vector3.Transform(right, turn);
+            Turn(node, Quaternion.Concatenate(turn, Quaternion.CreateFromAxisAngle(turnedRight, headPitch * share)));
+        }
+
+        LookForTesting = (spinePitch, headYaw, headPitch);
+    }
+
+    /// <summary>How near its lowest an ankle is to count as on the ground, in metres; how far a held foot may get from where the
+    /// clip puts it before it is let go, in metres; and how long a hold takes to come in or go, in seconds.</summary>
+    public const float FootDownMetres = 0.03f, FootSlipMetres = 0.3f, FootBlendSeconds = 0.08f;
+
+    // Each foot's place held on the ground, in glTF's world, how far it is held, and the ankle's lowest in the clips.
+    private readonly Vector3[] _footHeld = new Vector3[2];
+    private readonly float[] _footHold = new float[2];
+    private readonly bool[] _footLocked = new bool[2];
+    private float _ankleLowest = float.NaN;
+
+    /// <summary>Gets an ankle's place in the body's glTF frame as last posed, for testing.</summary>
+    internal Vector3 AnkleForTesting(int foot) => _world[_asset.Legs[foot].Ankle].Translation;
+
+    /// <summary>Gets how far each foot is held to the ground now, left then right, nought to one, for testing.</summary>
+    internal (float Left, float Right) FootHoldForTesting => (_footHold[0], _footHold[1]);
+
+    /// <summary>
+    /// Holds each foot where it came down while the clip has it down, the leg bent to keep it there, so it does not slide over
+    /// the ground as the clip's stride and his own pace or turn disagree -- a strafe at two thirds of its pace, a crouched walk at
+    /// twice its, a curve at a run. The held place moves against him as he moves and turns, as the ground does. Let go when the
+    /// clip lifts the foot or it would stretch too far, eased in and out so the foot does not snap.
+    /// </summary>
+    private void LockFeet(Vector2 step, float turned, bool off)
+    {
+        (int Hip, int Knee, int Ankle)[] legs = _asset.Legs;
+        if (legs.Any(l => l.Hip < 0 || l.Knee < 0 || l.Ankle < 0))
+        {
+            return;
+        }
+
+        if (float.IsNaN(_ankleLowest))
+        {
+            _ankleLowest = legs.Min(l => _world[l.Ankle].Translation.Y);
+        }
+
+        // The ground's move against him this tick, in glTF's world (x his left, y up, z ahead): back by his step, and round
+        // the other way by his turn.
+        Vector3 back = ModernBodyAsset.FromBody(new Vector3(-step.Y, -step.X, 0f));
+        Matrix4x4 unturn = Matrix4x4.CreateRotationY(-turned);
+        float blend = TickSeconds / FootBlendSeconds;
+        for (int foot = 0; foot < 2; foot++)
+        {
+            (int hip, int knee, int ankle) = legs[foot];
+            Vector3 clip = _world[ankle].Translation;
+            bool down = !off && clip.Y < _ankleLowest + FootDownMetres && (step != Vector2.Zero || turned != 0f);
+            if (_footLocked[foot])
+            {
+                _footHeld[foot] = Vector3.Transform(_footHeld[foot] + back, unturn);
+                _footHeld[foot].Y = clip.Y;
+                if (!down || Vector3.Distance(_footHeld[foot], clip) > FootSlipMetres)
+                {
+                    _footLocked[foot] = false;
+                }
+            }
+            else if (down)
+            {
+                (_footLocked[foot], _footHeld[foot]) = (true, clip);
+            }
+
+            _footHold[foot] = Math.Clamp(_footHold[foot] + (_footLocked[foot] ? blend : -blend), 0f, 1f);
+            if (_footHold[foot] > 0f)
+            {
+                ReachHand((hip, knee, ankle), Vector3.Lerp(clip, _footHeld[foot], Smooth(_footHold[foot])));
+            }
+        }
+    }
+
+    // Whether a frame has posed and skinned this body (DrawAt) since the last tick, so this one need not.
+    private bool _drawnSinceTick;
+
+    // The skeleton as the last two ticks posed it, and their turn and lift, which every drawn frame between them blends.
+    private Matrix4x4[] _worldBefore = [], _worldNow = [], _worldDrawn = [];
+    private float _keptYaw, _keptYawBefore, _keptLift, _keptLiftBefore;
+
+    // This tick's finished skeleton, the last one's kept before it.
+    private void Keep(float yaw, float lift)
+    {
+        if (_worldNow.Length != _world.Length)
+        {
+            (_worldBefore, _worldNow, _worldDrawn) = ((Matrix4x4[])_world.Clone(), (Matrix4x4[])_world.Clone(), new Matrix4x4[_world.Length]);
+            (_keptYawBefore, _keptLiftBefore) = (yaw, lift);
+        }
+        else
+        {
+            (_worldBefore, _worldNow) = (_worldNow, _worldBefore);
+            Array.Copy(_world, _worldNow, _world.Length);
+            (_keptYawBefore, _keptLiftBefore) = (_keptYaw, _keptLift);
+        }
+
+        (_keptYaw, _keptLift) = (yaw, lift);
+    }
+
+    /// <summary>
+    /// Poses and skins the body for a frame drawn between ticks: every joint blended between the last two ticks' skeletons by
+    /// how far between them the frame is, as the soldier's place and facing are. Posed only each tick, his limbs stepped at
+    /// thirty a second under a body that glided at the display's rate -- a run was the worst of it.
+    /// </summary>
+    /// <param name="alpha">How far the frame is from the tick before the last to the last, nought to one.</param>
+    public void DrawAt(float alpha)
+    {
+        if (SkinAt(alpha))
+        {
+            Upload();
+        }
+    }
+
+    /// <summary>The first half of <see cref="DrawAt"/>: the blend and the skinning, which touch only this body and so run
+    /// beside other bodies' on other threads.</summary>
+    /// <returns>Whether there was a pose to skin.</returns>
+    public bool SkinAt(float alpha)
+    {
+        if (_worldNow.Length == 0)
+        {
+            return false;
+        }
+
+        _drawnSinceTick = true;
+
+        for (int node = 0; node < _worldNow.Length; node++)
+        {
+            Matrix4x4 a = _worldBefore[node], b = _worldNow[node];
+            if (Matrix4x4.Decompose(a, out Vector3 sa, out Quaternion ra, out Vector3 ta) && Matrix4x4.Decompose(b, out Vector3 sb, out Quaternion rb, out Vector3 tb))
+            {
+                _worldDrawn[node] = Matrix4x4.CreateScale(Vector3.Lerp(sa, sb, alpha)) * Matrix4x4.CreateFromQuaternion(Quaternion.Slerp(ra, rb, alpha))
+                    * Matrix4x4.CreateTranslation(Vector3.Lerp(ta, tb, alpha));
+            }
+            else
+            {
+                _worldDrawn[node] = b;
+            }
+        }
+
+        foreach ((int joint, (int node, Matrix4x4 inverseBind)) in _asset.Joints.Select((j, i) => (i, j)))
+        {
+            _skin[joint] = inverseBind * _worldDrawn[node];
+        }
+
+        float yaw = _keptYawBefore + ((_keptYaw - _keptYawBefore) * alpha);
+        float lift = _keptLiftBefore + ((_keptLift - _keptLiftBefore) * alpha);
+        _asset.Skin(_skin, yaw, lift, _vertices);
+        return true;
+    }
+
+    /// <summary>The second half of <see cref="DrawAt"/>: the skinned mesh to the device, on the thread that owns it.</summary>
+    public void Upload() => _device.UpdateAnimatedMesh(Mesh, _vertices);
 
     /// <summary>Gets what the body last showed, for the body log (<c>dev_body_log</c>).</summary>
     public string Showing { get; private set; } = string.Empty;

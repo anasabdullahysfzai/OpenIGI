@@ -37,6 +37,158 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>
+    /// A body drawn every frame, whose frames then stop drawing it -- smoothing off, as under a menu or a cutscene -- is posed by
+    /// its ticks again: it waited on frames that never came, and slid about frozen in its last pose, firing without moving.
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void ABodyNoLongerDrawnEveryFrameIsPosedByItsTicks()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        for (int tick = 0; tick < 20; tick++)
+        {
+            body.Tick(3.2f / 30f, 0f, aiming: true);
+            body.DrawAt(0.5f);
+        }
+
+        Vector3 before = body.GunEnds!.Value.Muzzle;
+        for (int tick = 0; tick < 5; tick++)
+        {
+            body.Tick(3.2f / 30f, 0f, aiming: true);
+        }
+
+        Vector3 after = body.GunEnds!.Value.Muzzle;
+        output.WriteLine($"muzzle {before} -> {after} over five ticks undrawn");
+        Assert.True(Vector3.Distance(before, after) > 0.005f, "the body froze once its frames stopped drawing it");
+    }
+
+    /// <summary>
+    /// A look that swings right round in a tick -- the player behind him all at once -- leaves the body whole: the blend of two
+    /// opposite looks came out as nothing, and its normal as not-a-number, which spread through every pose after it for good.
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void ALookSwungRightRoundLeavesHimWhole()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        for (int tick = 0; tick < 60; tick++)
+        {
+            Vector3 look = tick < 20 ? new Vector3(0f, 1f, 0f) : tick < 40 ? new Vector3(0f, -1f, 0f) : default;
+            body.Tick(tick > 45 ? 3.2f / 30f : 0f, 0f, aiming: true, look: look);
+            body.DrawAt(0.5f);
+            (Vector3 muzzle, Vector3 stock) = body.GunEnds!.Value;
+            Assert.True(float.IsFinite(muzzle.X) && float.IsFinite(stock.Z), $"the body is not a number at tick {tick}");
+        }
+    }
+
+    /// <summary>
+    /// Aiming at a man above him, the rifle comes up onto him, the upper body bent to it; looking at one aside, the head turns.
+    /// The clips aim level, so on stairs he fired level with the rifle pointed off the man he shot at.
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void HeAimsAtAManAboveAndTurnsHisHeadToOneAside()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        float Elevation(Vector3 look)
+        {
+            using ModernBody body = new(asset, device);
+            for (int tick = 0; tick < 30; tick++)
+            {
+                body.Tick(0f, 0f, aiming: true, look: look);
+            }
+
+            (Vector3 muzzle, Vector3 stock) = body.GunEnds!.Value;
+            Vector3 barrel = muzzle - stock;
+            return MathF.Atan2(barrel.Z, MathF.Sqrt((barrel.X * barrel.X) + (barrel.Y * barrel.Y))) * 180f / MathF.PI;
+        }
+
+        float level = Elevation(default), up = Elevation(new Vector3(0f, 1f, MathF.Tan(30f * MathF.PI / 180f)));
+        output.WriteLine($"rifle at {level:0.0} degrees aiming level, {up:0.0} aiming 30 degrees up");
+        Assert.InRange(up - level, 22f, 38f);
+
+        using ModernBody watcher = new(asset, device);
+        for (int tick = 0; tick < 30; tick++)
+        {
+            watcher.Tick(0f, 0f, look: new Vector3(1f, 1f, 0f));
+        }
+
+        output.WriteLine($"head turned {watcher.LookForTesting.HeadYaw * 180f / MathF.PI:0.0} degrees to a man 45 degrees to his right");
+        Assert.InRange(watcher.LookForTesting.HeadYaw * 180f / MathF.PI, 40f, 50f);
+    }
+
+    /// <summary>
+    /// A foot the clip puts down stays where it came down while it is held, however the clip's stride and his own pace disagree:
+    /// a strafe at 3 metres a second, two thirds of the strafing run's own pace, slid the planted foot along the ground.
+    /// </summary>
+    [RequiresModernBodyTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void APlantedFootStaysPut(bool strafe)
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        float speed = strafe ? 3.0f : 3.2f;
+        Vector2 travel = strafe ? new Vector2(0f, speed / 30f) : new Vector2(speed / 30f, 0f);
+        Vector3 walked = Vector3.Zero;
+        Vector3?[] was = [null, null];
+        float worst = 0f, held = 0f;
+        for (int tick = 0; tick < 90; tick++)
+        {
+            body.Tick(speed / 30f, 0f, aiming: true, heading: strafe ? new Vector2(0f, 1f) : default, travel: travel);
+            walked += ModernBodyAsset.FromBody(new Vector3(travel.Y, travel.X, 0f));
+            (float left, float right) = body.FootHoldForTesting;
+            float[] hold = [left, right];
+            for (int foot = 0; foot < 2; foot++)
+            {
+                Vector3 onGround = walked + body.AnkleForTesting(foot);
+                if (hold[foot] >= 1f && was[foot] is { } before && tick > 15)
+                {
+                    float slid = Vector2.Distance(new Vector2(onGround.X, onGround.Z), new Vector2(before.X, before.Z));
+                    worst = Math.Max(worst, slid);
+                    held++;
+                }
+
+                was[foot] = hold[foot] >= 1f ? onGround : null;
+            }
+        }
+
+        output.WriteLine($"{(strafe ? "strafe" : "run")}: {held} held foot-ticks, worst slide {worst * 100f:0.0} cm a tick");
+        Assert.True(held > 10, "no foot was ever held down");
+        Assert.True(worst < 0.02f, $"a held foot slid {worst * 100f:0.0} cm in a tick");
+    }
+
+    /// <summary>
+    /// A frame drawn between ticks poses the body between them, as his place is drawn: a running stride half a tick on is
+    /// halfway between the two ticks' poses, not either of them (posed only each tick, his limbs stepped at thirty a second).
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void AFrameBetweenTicksIsPosedBetweenThem()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        for (int tick = 0; tick < 20; tick++)
+        {
+            body.Tick(4f / 30f, 0f, aiming: true);
+        }
+
+        Vector3? Muzzle() => body.GunEnds?.Muzzle;
+        body.DrawAt(0f);
+        Vector3 before = Muzzle()!.Value;
+        body.DrawAt(1f);
+        Vector3 now = Muzzle()!.Value;
+        body.DrawAt(0.5f);
+        Vector3 half = Muzzle()!.Value;
+        output.WriteLine($"muzzle {before} -> {half} -> {now}");
+        Assert.True(Vector3.Distance(before, now) > 0.005f, "the run's two ticks posed him the same");
+        Assert.True(Vector3.Distance(half, (before + now) / 2f) < 0.02f * Vector3.Distance(before, now) + 0.002f, "half a tick on is not halfway");
+    }
+
+    /// <summary>
     /// A turn on the spot steps the clip as big as the turn is fast, in the legs alone under the aim he keeps, and plays it on by
     /// the angle turned: an about-face at the modern AI's 240 degrees a second steps the 180-degree turn through once in its
     /// three quarters of a second; a slow turn at 60 steps the 45.

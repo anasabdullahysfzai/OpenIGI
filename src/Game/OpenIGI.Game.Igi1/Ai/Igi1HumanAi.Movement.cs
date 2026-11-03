@@ -1,3 +1,4 @@
+using OpenIGI.Formats.Ai;
 using OpenIGI.Core.Numerics;
 using OpenIGI.Game.Ai;
 using OpenIGI.Game.Igi1.Player;
@@ -156,8 +157,50 @@ public sealed partial class Igi1HumanAi
     /// <summary>The most the modern AI turns in a tick, in radians: 240 degrees a second, an about-face in three quarters of one.</summary>
     public const double ModernTurnPerTick = (240.0 * Math.PI / 180.0) / 30.0;
 
+    /// <summary>The most the modern AI turns in a tick on the move, in radians: 540 degrees a second, a curve a third of a metre
+    /// across at a run, well inside the metre short of a waypoint he passes it.</summary>
+    public const double ModernRunTurnPerTick = (540.0 * Math.PI / 180.0) / 30.0;
+
+    /// <summary>The modern AI's steady paces, in metres a second: the modern body's run and walk at their own speed (3.0 and
+    /// 1.16), and above which an original stride counts as a run.</summary>
+    public const double ModernRunMetresPerSecond = 3.2, ModernWalkMetresPerSecond = 1.2, ModernRunAbove = 2.4;
+
+    /// <summary>How fast the modern AI gathers pace and brakes, in metres a second each second, and the least pace he arrives
+    /// at, in metres a second: a run is reached in about two thirds of a second and braked from over the last metre.</summary>
+    public const double ModernGatherPerSecond = 5.0, ModernBrakePerSecond = 6.0, ModernArriveMetresPerSecond = 0.6;
+
+    // The modern AI's pace now, in metres a second, eased toward the one wanted.
+    private double _modernPace;
+
+    // How far is left of his walk along its waypoints, in world units.
+    private double RouteLeftUnits()
+    {
+        double left = 0.0;
+        Vector3d from = Position;
+        foreach (AiWaypoint waypoint in _route)
+        {
+            left += Flat2(waypoint.Point, from);
+            from = waypoint.Point;
+        }
+
+        return left;
+    }
+
+    /// <summary>How short of a waypoint the modern AI passes it when another follows, in metres: he curves through.</summary>
+    public const double CornerMetres = 1.0;
+
+    // Whether he is within a metre and a half of the last waypoint of his walk, which he must land on.
+    private bool NearLastWaypoint =>
+        _route.Count == 1 && Flat2(_route[0].Point, Position) < 1.5 * GraphNode.MetreInUnits;
+
+    private static double Flat2(Vector3d a, Vector3d b)
+    {
+        double dx = a.X - b.X, dy = a.Y - b.Y;
+        return Math.Sqrt((dx * dx) + (dy * dy));
+    }
+
     // This tick's crouched or strafed step, set by the modern fight: the stride's scale, and whether it goes along the way.
-    private (double Scale, bool Along)? _stepStyle;
+    private (double MetresPerSecond, bool Along)? _stepStyle;
 
     private void StepBody()
     {
@@ -174,13 +217,16 @@ public sealed partial class Igi1HumanAi
             return;
         }
 
-        // The modern AI turns on the spot as a man can, half a turn in three quarters of a second at most: the original's turn
-        // comes round in a tick or two, which on a modern body is a snap. Not on the move: a runner held to it overshot his
-        // waypoints and circled them for good.
+        // The modern AI turns as a man can: on the spot half a turn in three quarters of a second at most (the original's turn
+        // comes round in a tick or two, which on a modern body is a snap); on the move, curving through his corners (Advance
+        // passes a waypoint a metre short when there is another after it), but sharp onto the last, which he must land on --
+        // a runner held to a turn rate there circled it for good.
         double turned = _bodyTurn.Step(turn);
-        if (GameplayCVars.ModernAi.Value && Math.Abs(_rootMotionThisTick) < 1.0 && Math.Abs(_rootLateralThisTick) < 1.0)
+        bool moving = Math.Abs(_rootMotionThisTick) >= 1.0 || Math.Abs(_rootLateralThisTick) >= 1.0;
+        if (GameplayCVars.ModernAi.Value && (!moving || !NearLastWaypoint))
         {
-            turned = Math.Clamp(turned, -ModernTurnPerTick, ModernTurnPerTick);
+            double most = moving ? ModernRunTurnPerTick : ModernTurnPerTick;
+            turned = Math.Clamp(turned, -most, most);
         }
 
         Facing = Igi1AiGeometry.Wrap((float)(Facing + turned));
@@ -191,23 +237,39 @@ public sealed partial class Igi1HumanAi
         Vector3d world = SoldierDeathFall.RotateAboutZ(
             new Vector3d(_rootLateralThisTick, _rootMotionThisTick, 0.0), Facing + RecoilYaw);
 
-        // The modern fight's crouched or strafed step (Igi1HumanAi.Tactics): the run's stride scaled down and, strafing, laid
-        // along the way to the next waypoint whatever way he faces, never past it.
-        if (_stepStyle is (double scale, bool along))
+        // The modern AI moves at the pace of the modern body's own clip, steady, not the original clip's root motion, which
+        // surged between 3.9 and 5 metres a second tick to tick at a run and played the legs at a different rate every tick:
+        // a run at the run's pace, a walk at the walk's, and the modern fight's crouched or strafed step at theirs -- strafing,
+        // laid along the way to the next waypoint whatever way he faces. Never past the waypoint.
+        double step = Math.Sqrt((world.X * world.X) + (world.Y * world.Y));
+        (double MetresPerSecond, bool Along)? style = _stepStyle;
+        _stepStyle = null;
+        if (GameplayCVars.ModernAi.Value && step > 1.0 && _route.Count > 0)
         {
-            _stepStyle = null;
-            double length = Math.Sqrt((world.X * world.X) + (world.Y * world.Y)) * scale;
-            if (along && _route.Count > 0)
-            {
-                Vector3d to = _route[0].Point - Position;
-                double left = Math.Sqrt((to.X * to.X) + (to.Y * to.Y));
-                world = left > 1.0 ? new Vector3d(to.X / left, to.Y / left, 0.0) * Math.Min(length, left) : default;
-            }
-            else
-            {
-                world *= scale;
-            }
+            double original = step / GraphNode.MetreInUnits * AiCombatParameters.TicksPerSecond;
+            double wanted = style?.MetresPerSecond ?? (original > ModernRunAbove ? ModernRunMetresPerSecond : ModernWalkMetresPerSecond);
+
+            // Up to speed and down from it as a man gets there, not in a tick: he gathers pace from a standstill, and brakes
+            // so as to come to rest on the end of his walk, not at it full tilt.
+            double ahead = RouteLeftUnits() / GraphNode.MetreInUnits;
+            wanted = Math.Min(wanted, Math.Max(ModernArriveMetresPerSecond, Math.Sqrt(2.0 * ModernBrakePerSecond * ahead)));
+            double dt = 1.0 / AiCombatParameters.TicksPerSecond;
+            _modernPace = _modernPace < wanted
+                ? Math.Min(wanted, _modernPace + (ModernGatherPerSecond * dt))
+                : Math.Max(wanted, _modernPace - (ModernBrakePerSecond * dt));
+            double pace = Math.Max(_modernPace, ModernArriveMetresPerSecond);
+            double length = pace * GraphNode.MetreInUnits / AiCombatParameters.TicksPerSecond;
+            Vector3d to = _route[0].Point - Position;
+            double left = Math.Sqrt((to.X * to.X) + (to.Y * to.Y));
+            Vector3d along = style is { Along: true } && left > 1.0 ? new Vector3d(to.X / left, to.Y / left, 0.0) : new Vector3d(world.X / step, world.Y / step, 0.0);
+            world = along * Math.Min(length, Math.Max(left, length * 0.25));
         }
+        else if (GameplayCVars.ModernAi.Value)
+        {
+            // Stopped: the next walk gathers pace from rest.
+            _modernPace = 0.0;
+        }
+
         double x = Position.X + world.X;
         double y = Position.Y + world.Y;
         if (world.X != 0.0 || world.Y != 0.0)

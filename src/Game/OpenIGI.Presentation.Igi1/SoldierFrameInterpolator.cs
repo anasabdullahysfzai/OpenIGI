@@ -44,6 +44,8 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
 
     // The frame alpha BeginFrame resolved, kept for the player's body, which draws once per frame.
     private float _frameAlpha = 1f;
+    private long _lastFrameStamp;
+    private readonly List<ModernBody> _modern = [];
     private bool _frameSmooth;
 
     /// <summary>Gets how far this frame sits between the last two ticks, as <see cref="BeginFrame"/> resolved it.</summary>
@@ -62,12 +64,46 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
         _frameSmooth = smooth;
         _sim.ForgetGroundSnaps();
 
+        long began = System.Diagnostics.Stopwatch.GetTimestamp();
         foreach (SoldierGroup group in _groups)
         {
             foreach (SoldierMember member in group.Soldiers)
             {
                 ResolveFrameState(member, alpha, smooth);
             }
+        }
+
+        // The modern bodies' limbs drawn between ticks too, as their places and facings are: blended and skinned side by side
+        // on the machine's cores, then handed to the device one after another.
+        if (smooth)
+        {
+            _modern.Clear();
+            foreach (SoldierGroup group in _groups)
+            {
+                _modern.AddRange(group.Soldiers.Select(m => m.Modern).OfType<ModernBody>());
+            }
+
+            bool[] skinned = new bool[_modern.Count];
+            Parallel.For(0, _modern.Count, i => skinned[i] = _modern[i].SkinAt(alpha));
+            for (int i = 0; i < _modern.Count; i++)
+            {
+                if (skinned[i])
+                {
+                    _modern[i].Upload();
+                }
+            }
+        }
+
+        // The frame log (dev_frame_log): each frame's time since the last, where it fell between ticks, and what posing the
+        // soldiers' bodies cost, to tell an uneven frame from an uneven pose.
+        if (GameplayCVars.FrameLog.Value)
+        {
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            double frame = _lastFrameStamp == 0 ? 0 : (now - _lastFrameStamp) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            double posing = (now - began) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            _lastFrameStamp = now;
+            _logger.Information(SoldierRenderer.LogCategory + ".Frame", FormattableString.Invariant(
+                $"frame {frame:0.0} ms, alpha {alpha:0.00}, posing {posing:0.00} ms, {_groups.Sum(g => g.Soldiers.Count(m => m.Modern is not null))} modern bodies"));
         }
     }
 

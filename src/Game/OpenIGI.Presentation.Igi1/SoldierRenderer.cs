@@ -898,10 +898,14 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
         EndTick();
     }
 
+    private long _tickOriginalSkin, _tickModern;
+
     /// <inheritdoc/>
     public void EndTick()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        long began = System.Diagnostics.Stopwatch.GetTimestamp();
+        (_tickOriginalSkin, _tickModern) = (0, 0);
         _sim.FinishTick();
         _shadowTick++;
 
@@ -921,6 +925,7 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
 
             foreach (SoldierMember member in group.Soldiers)
             {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 BonePose drawn = SoldierFrameInterpolator.PoseToDraw(member);
                 member.DrawnPose = drawn;
 
@@ -928,9 +933,13 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
                 // upload to settle both interpolation streams, then no more skinning or driver traffic.
                 bool posed = member.PoseUploads.ShouldUpload(drawn)
                     && SoldierSkinning.Upload(_device, member, group.Geometry, group.Body.Model, drawn);
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
 
                 // The modern character drawn in his place, if any, posed every tick whether his own pose moved or not.
                 TickModernBody(group, member);
+                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                _tickOriginalSkin += t1 - t0;
+                _tickModern += t2 - t1;
 
                 if (!posed)
                 {
@@ -963,6 +972,13 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
         // draws between the last two of these records, so they are the whole interface between the
         // 30 Hz simulation and however fast the display runs.
         _frames.CaptureTickStates();
+
+        if (OpenIGI.Game.GameplayCVars.FrameLog.Value)
+        {
+            static double Ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            _logger.Information(LogCategory + ".Frame", FormattableString.Invariant(
+                $"tick {Ms(System.Diagnostics.Stopwatch.GetTimestamp() - began):0.00} ms: original skins {Ms(_tickOriginalSkin):0.00}, modern bodies {Ms(_tickModern):0.00}"));
+        }
     }
 
     // Poses a soldier's lower level for the eye it was last drawn from, or frees it once the body is drawn whole again.

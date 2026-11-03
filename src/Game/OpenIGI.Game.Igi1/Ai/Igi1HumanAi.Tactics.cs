@@ -1,6 +1,7 @@
 using OpenIGI.Core.Numerics;
 using OpenIGI.Formats.Ai;
 using OpenIGI.Game.Ai;
+using OpenIGI.Game.Player;
 
 namespace OpenIGI.Game.Igi1.Ai;
 
@@ -51,11 +52,48 @@ public sealed partial class Igi1HumanAi
     private const double CoverChestMetres = 1.1, CoverHeadMetres = 1.6, KneelChestMetres = 0.6, KneelHeadMetres = 1.0;
     private const double ShooterEyeMetres = 1.6;
 
-    /// <summary>How fast he crouch-runs and strafes, against his run (the original's run clip, about four metres a second).</summary>
-    public const double CrouchStride = 0.55, StrafeStride = 0.7;
+    /// <summary>How fast he crouch-runs and strafes, in metres a second: the crouched walk at twice its pace, the strafing runs
+    /// at two thirds of theirs.</summary>
+    public const double CrouchMetresPerSecond = 1.2, StrafeMetresPerSecond = 3.0;
+
+    /// <summary>The furthest he crouch-runs back into cover, in metres; further, he runs.</summary>
+    public const double CrouchReachMetres = 2.2;
 
     /// <summary>The furthest he strafes to a position he can see the player from, in metres; further, he runs.</summary>
     public const double StrafeReachMetres = 8.0;
+
+    /// <summary>
+    /// How much incoming fire pins him, nought up: each round past or into him adds <see cref="SuppressionPerRound"/>, and it
+    /// wears off at <see cref="SuppressionFadePerSecond"/>. Over <see cref="PinnedAbove"/>, down in cover he stays down, up to
+    /// <see cref="PinnedMostTicks"/>.
+    /// </summary>
+    public const double SuppressionPerRound = 0.3, SuppressionFadePerSecond = 0.5, PinnedAbove = 0.6, SuppressionMost = 1.5;
+
+    /// <inheritdoc cref="SuppressionPerRound"/>
+    public const int PinnedMostTicks = 5 * 30;
+
+    /// <summary>How long after the player was last seen a squad mate keeps firing on that place while another flanks, in ticks.</summary>
+    public const int SuppressTicks = 5 * 30;
+
+    /// <summary>
+    /// A grenade to flush him out: once he has been out of sight this long behind cover (ticks), within this reach (metres),
+    /// and no squad mate has thrown for <see cref="GrenadeSquadTicks"/>.
+    /// </summary>
+    public const int GrenadeUnseenTicks = 2 * 30;
+
+    /// <inheritdoc cref="GrenadeUnseenTicks"/>
+    public const double GrenadeNearestMetres = 8.0, GrenadeFurthestMetres = 25.0;
+
+    /// <inheritdoc cref="GrenadeUnseenTicks"/>
+    public const int GrenadeSquadTicks = 15 * 30;
+
+    private double _suppression;
+    private bool _pinnedSaid;
+    private bool _suppressingSaid;
+    private int _grenadeAsked = -1;
+
+    /// <summary>Gets how pinned down by incoming fire he is (see <see cref="SuppressionPerRound"/>), for testing and the log.</summary>
+    public double Suppression => _suppression;
 
     private enum MoveStyle
     {
@@ -160,7 +198,16 @@ public sealed partial class Igi1HumanAi
         }
 
         Vector3d target = _lastKnown ?? feet;
-        bool underFire = Events.DrainedCount(AiEvent.TakingDamage) > 0 || Events.DrainedCount(AiEvent.GunshotMiss) > 0;
+        int rounds = Events.DrainedCount(AiEvent.TakingDamage) + Events.DrainedCount(AiEvent.GunshotMiss);
+        bool underFire = rounds > 0;
+        _suppression = Math.Min(SuppressionMost,
+            Math.Max(0.0, _suppression - (SuppressionFadePerSecond / AiCombatParameters.TicksPerSecond)) + (rounds * SuppressionPerRound));
+
+        // A grenade he asked for is the original's to throw (the patrol arm's one-shot); one that never went is let go.
+        if (_grenadeAsked >= 0 && tick - _grenadeAsked > 60 && _patrolOneShotChild == AiPatrolAction.ThrowGrenade)
+        {
+            _patrolOneShotChild = null;
+        }
 
         // Nobody has seen him for a long while: the fight is left to end as the original's does, and the search to follow it.
         if (tick - _lastSeenTick > GiveUpTicks && _lastSeenTick > 0)
@@ -188,7 +235,7 @@ public sealed partial class Igi1HumanAi
                     // Crouched, slower along his way; strafing, slower still on his way but facing the player all along.
                     if (_tactic == TacticPhase.Moving && _moveStyle != MoveStyle.Run)
                     {
-                        _stepStyle = (_moveStyle == MoveStyle.Crouch ? CrouchStride : StrafeStride, _moveStyle == MoveStyle.Strafe);
+                        _stepStyle = (_moveStyle == MoveStyle.Crouch ? CrouchMetresPerSecond : StrafeMetresPerSecond, _moveStyle == MoveStyle.Strafe);
                         if (_moveStyle == MoveStyle.Strafe)
                         {
                             TurnTowards(AimPointOf(target, TargetCrouching), 0f, level: true);
@@ -238,6 +285,17 @@ public sealed partial class Igi1HumanAi
                     _downUntil = Math.Max(_downUntil, tick + (DownTicks / 2));
                 }
 
+                // Pinned: while the rounds keep coming he keeps his head down, but not for good.
+                if (_suppression > PinnedAbove && tick - _phaseSince < PinnedMostTicks)
+                {
+                    _downUntil = Math.Max(_downUntil, tick + 6);
+                    if (!_pinnedSaid)
+                    {
+                        _pinnedSaid = true;
+                        ModernLog?.Invoke("is pinned down");
+                    }
+                }
+
                 // Seen where he is down: the place does not hide him from where the player has got to.
                 if (tick - _phaseSince > 10 && tick % 6 == 0 && Exposed(feet, _downLow))
                 {
@@ -252,6 +310,13 @@ public sealed partial class Igi1HumanAi
 
                 if (tick >= _downUntil)
                 {
+                    // Out of a refuge he ran to under fire: somewhere to fight from now.
+                    if (_fireNode < 0)
+                    {
+                        _tactic = TacticPhase.None;
+                        return TakePosition(tick, target, "comes out of cover to fight") || Advance(tick, target) || Hold(tick, target);
+                    }
+
                     // Up over low cover where he is, or a step out to his firing spot.
                     if (_downLow || _fireNode == CurrentNode)
                     {
@@ -282,9 +347,38 @@ public sealed partial class Igi1HumanAi
     // At his firing spot: the original's own fire, a burst or two, then down; on when the player has moved or gone.
     private bool Fire(int tick, Vector3d enemy, Vector3d target, bool seen, bool underFire)
     {
+        // The player gone from view behind cover a while, near enough: a grenade to bring him out, one in the squad at a time.
+        double reach = Flat(Position, target) / GraphNode.MetreInUnits;
+        if (!seen && HasGrenade && _combat!.Phase == AiCombatPhase.Stand && CombatState == HumanSoldierStates.StandState
+            && tick - _lastSeenTick > GrenadeUnseenTicks && reach is >= GrenadeNearestMetres and <= GrenadeFurthestMetres
+            && tick - (_squad?.GrenadeTick ?? int.MinValue / 2) > GrenadeSquadTicks)
+        {
+            if (_squad is not null)
+            {
+                _squad.GrenadeTick = tick;
+            }
+
+            _grenadeAsked = tick;
+            _channelWrites.Clear();
+            TurnTowards(AimPointOf(target, TargetCrouching), 0.034906585f);
+            _patrolOneShotChild = AiPatrolAction.ThrowGrenade;
+            WriteChannel(AiCombatChannel.ThrowGrenade, 1f);
+            ModernLog?.Invoke(FormattableString.Invariant($"throws a grenade to flush him out ({reach:0.0} m)"));
+            return true;
+        }
+
+        // Out of view while a squad mate goes round him: fire on where he was, to keep him down. Real rounds; cover stops them.
+        bool suppressing = !seen && _lastKnown is not null && tick - _lastSeenTick < SuppressTicks && (_squad?.OtherFlanking(this, tick) ?? false);
+        if (suppressing && !_suppressingSaid)
+        {
+            _suppressingSaid = true;
+            ModernLog?.Invoke("keeps him pinned while a squad mate flanks");
+        }
+
+        _suppressingSaid &= suppressing;
         _channelWrites.Clear();
         HoldPosture();
-        RunSharedSubAction(enemy, _weapon!());
+        RunSharedSubAction(enemy, _weapon!(), suppressing ? AimPointOf(target, TargetCrouching) : null);
         if (!_combatInstalled)
         {
             return true;
@@ -301,6 +395,23 @@ public sealed partial class Igi1HumanAi
         bool between = phase != AiCombatPhase.Fire;
         bool canGetDown = _downLow || _downNode >= 0;
 
+        // Pinned in the open, with nowhere here to get down: out of the fire first, wherever hides him, then a place to fight.
+        if (between && !canGetDown && _suppression > PinnedAbove && tick - _phaseSince > 15)
+        {
+            CancelFire();
+            if (FindRefuge(target) is var (refuge, low) && GoTo(refuge, claim: true))
+            {
+                (_fireNode, _downNode, _downLow) = (-1, refuge, low);
+                (_moveStyle, _tactic, _phaseSince, _pendingDown) = (MoveStyle.Run, TacticPhase.Moving, tick, true);
+                _downUntil = tick + DownTicks + NextBounded(DownMoreTicks);
+                ModernLog?.Invoke(FormattableString.Invariant(
+                    $"is pinned in the open: runs for cover {Vector3d.Distance(Position, _graph!.NodeAt(refuge)!.Position) / GraphNode.MetreInUnits:0.0} m away (node {refuge})"));
+                return true;
+            }
+
+            _phaseSince = tick + 60;
+        }
+
         // Down after his bursts, or sooner when rounds come close, if there is anywhere to get down.
         if (between && canGetDown && (_burstsLeft <= 0 || (underFire && tick - _phaseSince > 15)))
         {
@@ -311,8 +422,9 @@ public sealed partial class Igi1HumanAi
             }
             else if (GoTo(_downNode))
             {
-                // Back into cover, low.
-                _moveStyle = MoveStyle.Crouch;
+                // Back into cover: low for a step or two, at a run for more (the crouched walk is slow).
+                _moveStyle = Vector3d.Distance(Position, _graph!.NodeAt(_downNode)!.Position) <= CrouchReachMetres * GraphNode.MetreInUnits
+                    ? MoveStyle.Crouch : MoveStyle.Run;
                 _tactic = TacticPhase.Moving;
                 _phaseSince = tick;
                 ModernLog?.Invoke("gets back into cover");
@@ -324,7 +436,7 @@ public sealed partial class Igi1HumanAi
         }
 
         // The player out of view from here a while -- moved round, or gone: somewhere he can be seen from, or after him.
-        if (between && tick - Math.Max(_lastSeenTick, _phaseSince) > UnseenTicks)
+        if (between && !suppressing && tick - Math.Max(_lastSeenTick, _phaseSince) > UnseenTicks)
         {
             CancelFire();
             // Nowhere better: he watches where the player went from here a while longer.
@@ -363,6 +475,7 @@ public sealed partial class Igi1HumanAi
 
     private void GetDown(int tick, bool keepUntil = false)
     {
+        _pinnedSaid = false;
         _tactic = TacticPhase.Down;
         _phaseSince = tick;
         if (!keepUntil)
@@ -539,6 +652,44 @@ public sealed partial class Igi1HumanAi
         return best;
     }
 
+    /// <summary>The furthest a man pinned in the open runs for cover, in metres.</summary>
+    public const double RefugeReachMetres = 10.0;
+
+    // Out of the fire: the nearest node that hides him from the player and a step or two either side of him -- standing, or
+    // kneeling behind low cover when nothing near hides him standing -- firing spot or not, and not one he was just seen in.
+    private (int Node, bool Low)? FindRefuge(Vector3d target)
+    {
+        double metre = GraphNode.MetreInUnits;
+        Vector3d eye = new(target.X, target.Y, target.Z + (ShooterEyeMetres * metre));
+        (int, bool)? best = null;
+        double bestAway = RefugeReachMetres * metre;
+        double bestLowAway = bestAway;
+        (int, bool)? bestLow = null;
+        foreach (GraphNode node in _graph!.Nodes)
+        {
+            double away = Vector3d.Distance(Position, node.Position);
+            if (away >= bestAway || node.Id == CurrentNode || (node.Criteria & GraphNodeCriteria.View) != 0
+                || _seenDownUntil.GetValueOrDefault(node.Id, -1) > _lastTick
+                || (_occupancy is not null && !_occupancy.IsClaimedBy(_graph, node.Id, this) && _occupancy.IsFull(_graph, node.Id)))
+            {
+                continue;
+            }
+
+            Vector3d across = Across(node.Position, target, CoverFlankMetres * metre);
+            Vector3d[] eyes = [eye, eye + across, eye - across];
+            if (eyes.All(from => Hidden(from, node, CoverChestMetres) && Hidden(from, node, CoverHeadMetres)))
+            {
+                (best, bestAway) = ((node.Id, false), away);
+            }
+            else if (away < bestLowAway && eyes.All(from => Hidden(from, node, KneelChestMetres) && Hidden(from, node, KneelHeadMetres)))
+            {
+                (bestLow, bestLowAway) = ((node.Id, true), away);
+            }
+        }
+
+        return best ?? bestLow;
+    }
+
     // Toward the player's last known place: the node nearest it he can reach, not on top of it.
     private int? FindAdvance(Vector3d target)
     {
@@ -573,6 +724,7 @@ public sealed partial class Igi1HumanAi
         _lastSeenTick = 0;
         _pendingDown = false;
         _seenDownUntil.Clear();
+        (_suppression, _grenadeAsked) = (0.0, -1);
     }
 
     /// <summary>Gets how many waypoints are left on the soldier's route, and whether he is writing forward, for testing.</summary>

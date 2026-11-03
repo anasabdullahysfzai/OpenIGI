@@ -167,6 +167,7 @@ internal sealed class ModernArena
         int[] clip = [30];
         _clips[soldier] = clip;
         soldier.SetSquad(Squad);
+        soldier.SetGrenadeAvailable(true);
         soldier.SetLineOfSight((from, to, _) => Clear(from, to));
         soldier.SetNodeOccupancy(new AiNodeOccupancy());
         soldier.ModernLog = log;

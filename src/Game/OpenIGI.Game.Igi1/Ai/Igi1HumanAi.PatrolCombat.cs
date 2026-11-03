@@ -634,13 +634,17 @@ public sealed partial class Igi1HumanAi
     /// <summary>The fire and reload sub-actions the two arms share.</summary>
     /// <param name="enemy">Where the target is.</param>
     /// <param name="weapon">The held weapon's state this tick.</param>
-    private void RunSharedSubAction(Vector3d enemy, AiCombatWeaponState weapon)
+    /// <param name="suppressAt">
+    /// The modern AI's suppressive fire: a point to fire on as though the target were seen there (where he was last seen),
+    /// or null to fire on the target as seen. The rounds are real; cover he has gone behind stops them.
+    /// </param>
+    private void RunSharedSubAction(Vector3d enemy, AiCombatWeaponState weapon, Vector3d? suppressAt = null)
     {
-        Vector3d aim = TrueAimPoint();
+        Vector3d aim = suppressAt ?? TrueAimPoint();
         AiCombatSense sense = new(
-            HasDetectionSlot: TargetSlot.IsRegistered,
-            InCone: TargetSlot.IsInCone,
-            Visible: TargetSlot.IsVisible,
+            HasDetectionSlot: TargetSlot.IsRegistered || suppressAt is not null,
+            InCone: TargetSlot.IsInCone || suppressAt is not null,
+            Visible: TargetSlot.IsVisible || suppressAt is not null,
             TargetPosition: aim,
             DistanceToTargetInUnits: Vector3d.Distance(Position, aim),
             LocomotionState: AiCombatChannels.StateOf(_type, AiStanceChannel.Standing),

@@ -413,6 +413,13 @@ public static class GameplayCVars
         CVarOptions.None,
         "Logs this soldier's modern body every tick: speed, clips, blend, pace (testing); -1 for none.");
 
+    /// <summary>Whether every drawn frame logs its time, its place between ticks and the soldiers' posing cost (testing).</summary>
+    public static readonly BoolCVar FrameLog = CVar.Bool(
+        "dev_frame_log",
+        false,
+        CVarOptions.None,
+        "Logs every frame: its time, where it falls between ticks, and the cost of posing the soldiers' bodies (testing).");
+
     /// <summary>Whether the player's trigger is held, for scripted fights (testing).</summary>
     public static readonly BoolCVar BotFire = CVar.Bool(
         "dev_bot_fire",
