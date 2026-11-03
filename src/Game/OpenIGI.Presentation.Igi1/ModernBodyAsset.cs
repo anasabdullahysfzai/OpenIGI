@@ -231,6 +231,38 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <inheritdoc cref="TurnLeft"/>
     public ModernClip TurnRight { get; private set; } = ModernClip.None;
 
+    private readonly List<(ModernClip Clip, float Radians)> _turnsLeft = [], _turnsRight = [];
+    private readonly Dictionary<ModernClip, string> _names = [];
+
+    /// <summary>Gets a clip's name in the character file, for the body log; "?" for one it did not read.</summary>
+    public string NameOf(ModernClip clip) => _names.GetValueOrDefault(clip, "?");
+
+    /// <summary>Above these turn rates, in radians a second, a turn on the spot takes the 135- and then the 180-degree clip.</summary>
+    public const float Turn135Above = 100f * MathF.PI / 180f, Turn180Above = 200f * MathF.PI / 180f;
+
+    /// <summary>
+    /// Gets the turn clip for a turn this fast, and the angle it turns in its length: the 45-degree turn for a slow one, the 135
+    /// for a quicker, the 180 for an about-face (<c>turn_left</c>, <c>turn_left_135</c>, <c>turn_left_180</c> and the right
+    /// ones), the biggest the file has where it lacks one.
+    /// </summary>
+    /// <param name="left">Whether he turns left.</param>
+    /// <param name="radiansPerSecond">How fast he turns.</param>
+    public (ModernClip Clip, float Radians) TurnFor(bool left, float radiansPerSecond)
+    {
+        List<(ModernClip Clip, float Radians)> turns = left ? _turnsLeft : _turnsRight;
+        float wanted = radiansPerSecond > Turn180Above ? MathF.PI : radiansPerSecond > Turn135Above ? 0.75f * MathF.PI : 0.25f * MathF.PI;
+        (ModernClip Clip, float Radians) best = turns[0];
+        foreach ((ModernClip clip, float radians) in turns)
+        {
+            if (radians <= wanted + 1e-3f && radians >= best.Radians)
+            {
+                best = (clip, radians);
+            }
+        }
+
+        return best;
+    }
+
     /// <summary>Gets the moves in a fight: crouched, sideways each way and back, rifle up (<c>crouch_walk</c>, <c>strafe_left</c>,
     /// <c>strafe_right</c>, <c>walk_back</c>; the aimed walk where the file has none).</summary>
     public ModernClip CrouchWalk { get; private set; } = ModernClip.None;
@@ -301,6 +333,22 @@ internal sealed class ModernBodyAsset : IDisposable
     }
 
     // A node under either shoulder.
+    /// <summary>Gets, for each node, whether it is a leg's (a thigh or below), which a turn's steps move alone.</summary>
+    public bool[] LegNodes { get; private set; } = [];
+
+    private bool IsLeg(int node)
+    {
+        for (int at = node; at >= 0; at = Parents[at])
+        {
+            if (Names[at] is "mixamorig:LeftUpLeg" or "mixamorig:RightUpLeg")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private bool IsArm(int node)
     {
         for (int at = node; at >= 0; at = Parents[at])
@@ -353,10 +401,20 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.ReadMesh(skinned.Mesh);
         asset.Idle = ModernClip.Read(Find(model, "idle", path), index, asset.Rest.Length, travelling: false);
         asset.Walk = ModernClip.Read(Find(model, "walk", path), index, asset.Rest.Length, travelling: true);
-        ModernClip Optional(string name, bool travelling, ModernClip otherwise) =>
-            model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
-                ? ModernClip.Read(clip, index, asset.Rest.Length, travelling)
-                : otherwise;
+        ModernClip Optional(string name, bool travelling, ModernClip otherwise)
+        {
+            if (model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is not { } found)
+            {
+                return otherwise;
+            }
+
+            ModernClip clip = ModernClip.Read(found, index, asset.Rest.Length, travelling);
+            asset._names[clip] = name;
+            return clip;
+        }
+
+        asset._names[asset.Idle] = "idle";
+        asset._names[asset.Walk] = "walk";
         asset.AimIdle = Optional("aim_idle", travelling: false, asset.Idle);
         asset.Fire = Optional("fire", travelling: false, asset.AimIdle);
         asset.AimWalk = Optional("aim_walk", travelling: true, asset.Walk);
@@ -365,6 +423,18 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.KneelAim = Optional("kneel_aim", travelling: false, asset.KneelIdle);
         asset.TurnLeft = Optional("turn_left", travelling: false, ModernClip.None);
         asset.TurnRight = Optional("turn_right", travelling: false, ModernClip.None);
+        foreach ((string name, float degrees) in new[] { ("", 45f), ("_135", 135f), ("_180", 180f) })
+        {
+            foreach (bool left in new[] { true, false })
+            {
+                ModernClip clip = name.Length == 0 ? (left ? asset.TurnLeft : asset.TurnRight)
+                    : Optional((left ? "turn_left" : "turn_right") + name, travelling: false, ModernClip.None);
+                if (!ReferenceEquals(clip, ModernClip.None))
+                {
+                    (left ? asset._turnsLeft : asset._turnsRight).Add((clip, degrees * MathF.PI / 180f));
+                }
+            }
+        }
         asset.Reload = Optional("reload", travelling: false, ModernClip.None);
         asset.KneelReload = Optional("kneel_reload", travelling: false, asset.Reload);
         asset.Throw = Optional("throw", travelling: false, ModernClip.None);
@@ -406,6 +476,7 @@ internal sealed class ModernBodyAsset : IDisposable
         }
 
         asset.ArmNodes = [.. Enumerable.Range(0, asset.Names.Length).Select(asset.IsArm)];
+        asset.LegNodes = [.. Enumerable.Range(0, asset.Names.Length).Select(asset.IsLeg)];
 
         return asset;
     }
@@ -609,6 +680,14 @@ internal sealed class ModernBodyAsset : IDisposable
     {
         float weight = mix.MoveWeight;
         (Vector3 T, Quaternion R, Vector3 S) a = mix.Stand.Sample(node, mix.StandTime, Rest[node]);
+
+        // A turn's steps, for the legs only: from the hips up he stays in his stance, the rifle up and on its mark.
+        if (mix.Legs is { } legs && mix.LegsWeight > 0f && LegNodes[node])
+        {
+            (Vector3 T, Quaternion R, Vector3 S) l = legs.Sample(node, mix.LegsTime, Rest[node]);
+            a = (Vector3.Lerp(a.T, l.T, mix.LegsWeight), Quaternion.Slerp(a.R, l.R, mix.LegsWeight), Vector3.Lerp(a.S, l.S, mix.LegsWeight));
+        }
+
         (Vector3 T, Quaternion R, Vector3 S) b = weight > 0f ? mix.Move.Sample(node, mix.MoveTime, Rest[node]) : a;
         Vector3 t = Vector3.Lerp(a.T, b.T, weight);
         if (node == mix.Stand.TravelNode)
@@ -794,7 +873,11 @@ internal sealed class ModernBodyAsset : IDisposable
 /// <param name="Move">The moving clip.</param>
 /// <param name="MoveTime">Where in it, in seconds.</param>
 /// <param name="MoveWeight">How much of it, nought to one.</param>
-internal readonly record struct ModernMix(ModernClip Stand, float StandTime, ModernClip Move, float MoveTime, float MoveWeight);
+/// <param name="Legs">A clip for the legs alone over the standing clip (a turn's steps), or null.</param>
+/// <param name="LegsTime">Where in the legs' clip they are.</param>
+/// <param name="LegsWeight">How far the legs are given to it, nought to one.</param>
+internal readonly record struct ModernMix(
+    ModernClip Stand, float StandTime, ModernClip Move, float MoveTime, float MoveWeight, ModernClip? Legs = null, float LegsTime = 0f, float LegsWeight = 0f);
 
 /// <summary>One clip of a <see cref="ModernBodyAsset"/>: a translation, rotation and scale curve for each node it moves.</summary>
 internal sealed class ModernClip

@@ -345,7 +345,7 @@ public sealed partial class Igi1HumanAi
 
         LastEventDistance = distance;
         RefreshBelievedTarget(source);
-        NoteShotAt(source);
+        NoteShotAt(source, shooterPosition);
         return true;
     }
 
@@ -382,7 +382,7 @@ public sealed partial class Igi1HumanAi
 
         LastEventDistance = distance;
         RefreshBelievedTarget(source);
-        NoteShotAt(source);
+        NoteShotAt(source, shooterPosition);
         return true;
     }
 
@@ -847,11 +847,19 @@ public sealed partial class Igi1HumanAi
 
     // The modern AI: a round in him or cracking past him, from the player, and he knows he is being shot at -- a silenced
     // gun's report reaches no one, but its rounds do. Retail only investigates a near miss.
-    private void NoteShotAt(int source)
+    private void NoteShotAt(int source, Vector3d? from = null)
     {
         if (GameplayCVars.ModernAi.Value && source == PlayerSource)
         {
             _shotAtUntilTick = _lastTick + ShotAtTicks;
+
+            // A round cracking past tells a man which way it came from, silenced or not: he hears it as the gunshot from
+            // there, and his script answers as it does a gunshot -- round to the shooter, and into the fight. Without, a round
+            // past him from behind played its flinch and nothing more.
+            if (from is { } shooter)
+            {
+                HearGunshot(shooter, Vector3d.Distance(Position, shooter) + AiCombatParameters.UnitsPerMetre, fromSameSide: false, source);
+            }
         }
     }
 

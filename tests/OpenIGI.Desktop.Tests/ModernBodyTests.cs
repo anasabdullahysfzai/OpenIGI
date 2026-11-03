@@ -36,6 +36,33 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.InRange(asset.WalkMetresPerSecond, 0.9f, 1.5f);
     }
 
+    /// <summary>
+    /// A turn on the spot steps the clip as big as the turn is fast, in the legs alone under the aim he keeps, and plays it on by
+    /// the angle turned: an about-face at the modern AI's 240 degrees a second steps the 180-degree turn through once in its
+    /// three quarters of a second; a slow turn at 60 steps the 45.
+    /// </summary>
+    [RequiresModernBodyTheory]
+    [InlineData(240f, "turn_left_180", 180f)]
+    [InlineData(60f, "turn_left", 45f)]
+    public void ATurnOnTheSpotStepsAsFarAsHeTurns(float degreesPerSecond, string clip, float clipDegrees)
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        float turning = degreesPerSecond * MathF.PI / 180f;
+        int ticks = (int)MathF.Round(clipDegrees / degreesPerSecond * 30f);
+        for (int tick = 0; tick < ticks; tick++)
+        {
+            body.Tick(0f, 0f, aiming: true, turning: turning);
+            Assert.Contains($"legs {clip} ", body.Showing, StringComparison.Ordinal);
+            Assert.Contains("stand aim_idle,", body.Showing, StringComparison.Ordinal);
+        }
+
+        // Turned the clip's own angle, the clip has played through once: its steps kept to the turn.
+        output.WriteLine($"{degreesPerSecond} deg/s for {ticks} ticks: {body.Showing}; clip at {body.TurnPhaseForTesting:0.00} of its length");
+        Assert.InRange(body.TurnPhaseForTesting, 0.9f, 1.1f);
+    }
+
     [RequiresModernBodyFact]
     public void HeStandsUpAtAMansHeightFacingTheWayASoldierFaces()
     {
@@ -285,6 +312,17 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
 }
 
 /// <summary>A fact that needs the play-test character, skipped where it is not.</summary>
+public sealed class RequiresModernBodyTheoryAttribute : TheoryAttribute
+{
+    public RequiresModernBodyTheoryAttribute()
+    {
+        if (!System.IO.File.Exists(ModernBodyTests.File))
+        {
+            Skip = $"No modern character at {ModernBodyTests.File} (set OPENIGI_MODERN_BODY).";
+        }
+    }
+}
+
 public sealed class RequiresModernBodyFactAttribute : FactAttribute
 {
     /// <summary>Initializes a new instance of the <see cref="RequiresModernBodyFactAttribute"/> class.</summary>

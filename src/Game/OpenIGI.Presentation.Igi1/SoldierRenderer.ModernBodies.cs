@@ -261,7 +261,13 @@ public sealed partial class SoldierRenderer
             body.Act(forced == "reload" ? asset.Reload : asset.Throw);
         }
 
-        float turning = forced switch { "turn_left" => MathF.PI / 3f, "turn_right" => -MathF.PI / 3f, _ => 0f };
+        // turn_left, turn_right: a steady 60 degrees a second (the 45-degree steps); turn_fast_left, turn_fast_right: 240 (the
+        // about-face's).
+        float turning = forced switch
+        {
+            "turn_left" => MathF.PI / 3f, "turn_right" => -MathF.PI / 3f,
+            "turn_fast_left" => 4f * MathF.PI / 3f, "turn_fast_right" => -4f * MathF.PI / 3f, _ => 0f,
+        };
         Vector2 heading = forced switch { "strafe_left" => new(0f, -1f), "strafe_right" => new(0f, 1f), "walk_back" => new(-1f, 0f), _ => default };
         if (heading != Vector2.Zero || forced == "crouch_walk")
         {
@@ -270,7 +276,7 @@ public sealed partial class SoldierRenderer
             return;
         }
 
-        bool aiming = forced is "aim" or "fire" or "aim_walk" or "kneel_aim" or "turn_left" or "turn_right";
+        bool aiming = forced is "aim" or "fire" or "aim_walk" or "kneel_aim" || forced.StartsWith("turn_", StringComparison.Ordinal);
         int shots = forced == "fire" ? ++_modernForcedTicks / 10 : 0;
         body.Tick(moved, yaw, 0f, aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning);
     }

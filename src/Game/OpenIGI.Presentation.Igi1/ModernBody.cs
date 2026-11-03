@@ -322,22 +322,38 @@ internal sealed class ModernBody : IDisposable
             }
         }
 
-        // Turning where he stands: the turn's steps, at the pace he turns (the clip turns 45 degrees in its length).
-        // A turn once started is stepped a third of a second at least: a turn rate over the line for a tick or two flickered
-        // the steps in and out.
+        // Turning where he stands: the steps of a turn clip as big as the turn is fast -- 45, 135 or 180 degrees -- each played on
+        // by the angle he turns, so his feet keep to his body whatever the speed. A turn once started is stepped a third of a
+        // second at least (a rate over the line for a tick or two flickered the steps in and out), on the biggest clip it has
+        // needed, so it does not change clip at every wobble of the rate.
         bool canTurn = _act is null && !kneeling && !moving && !ReferenceEquals(_asset.TurnLeft, ModernClip.None);
         if (canTurn && Math.Abs(turning) > TurnAboveRadiansPerSecond)
         {
+            if (_turnFor <= 0f || _turnLeft != turning > 0f)
+            {
+                (_turnClip, _turnRate) = (null, 0f);
+            }
+
             (_turnFor, _turnLeft) = (TurnHoldSeconds, turning > 0f);
+            _turnRate = Math.Max(_turnRate, Math.Abs(turning));
         }
 
         _turnFor = canTurn ? Math.Max(0f, _turnFor - TickSeconds) : 0f;
         if (_turnFor > 0f)
         {
-            stand = _turnLeft ? _asset.TurnLeft : _asset.TurnRight;
-            turning = Math.Max(Math.Abs(turning), TurnAboveRadiansPerSecond);
-            _turnTime += TickSeconds * Math.Clamp(Math.Abs(turning) / (MathF.PI / 4f / stand.Duration), 0.5f, 2f);
+            (ModernClip clip, float angle) = _asset.TurnFor(_turnLeft, _turnRate);
+            if (!ReferenceEquals(clip, _turnClip))
+            {
+                // A bigger clip as the turn quickens, from the same point of its step.
+                _turnTime = _turnClip is { } was ? _turnTime / was.Duration * clip.Duration : 0f;
+                _turnClip = clip;
+            }
+
+            _turnTime += Math.Max(Math.Abs(turning), TurnAboveRadiansPerSecond) * TickSeconds * clip.Duration / angle;
         }
+
+        // The steps come in and go out over a few ticks, under the stance he keeps.
+        _turnWeight = Math.Clamp(_turnWeight + ((_turnFor > 0f ? 1f : -1f) * TickSeconds / TurnBlendSeconds), 0f, 1f);
 
         // Crouched, his crouched walk; facing elsewhere than he goes, the clip for the way he goes against his facing.
         ModernClip move = crouched ? _asset.CrouchWalk
@@ -361,7 +377,7 @@ internal sealed class ModernBody : IDisposable
             : 1f;
         _stride = (_stride + (TickSeconds * pace / move.Duration)) % 1f;
         Showing = FormattableString.Invariant(
-            $"speed {Speed:0.00} m/s, stand {Name(stand)}, move {Name(move)} x{Smooth(_moveWeight):0.00} at pace {pace:0.00}, fade {_fade:0.00}");
+            $"speed {Speed:0.00} m/s, stand {Name(stand)}, move {Name(move)} x{Smooth(_moveWeight):0.00} at pace {pace:0.00}, fade {_fade:0.00}, legs {(_turnClip is { } legs && _turnWeight > 0f ? Name(legs) : "-")} x{Smooth(_turnWeight):0.00}");
         _standTime += TickSeconds;
 
         float hitWeight = 0f;
@@ -406,15 +422,7 @@ internal sealed class ModernBody : IDisposable
     public string Showing { get; private set; } = string.Empty;
 
     // A clip's name in the character file, for the log.
-    private string Name(ModernClip clip) =>
-        ReferenceEquals(clip, _asset.Idle) ? "idle" : ReferenceEquals(clip, _asset.Walk) ? "walk" : ReferenceEquals(clip, _asset.AimIdle) ? "aim_idle"
-        : ReferenceEquals(clip, _asset.Fire) ? "fire" : ReferenceEquals(clip, _asset.AimWalk) ? "aim_walk" : ReferenceEquals(clip, _asset.Run) ? "run"
-        : ReferenceEquals(clip, _asset.KneelIdle) ? "kneel_idle" : ReferenceEquals(clip, _asset.KneelAim) ? "kneel_aim"
-        : ReferenceEquals(clip, _asset.TurnLeft) ? "turn_left" : ReferenceEquals(clip, _asset.TurnRight) ? "turn_right"
-        : ReferenceEquals(clip, _asset.Reload) ? "reload" : ReferenceEquals(clip, _asset.KneelReload) ? "kneel_reload"
-        : ReferenceEquals(clip, _asset.Throw) ? "throw" : ReferenceEquals(clip, _asset.CrouchWalk) ? "crouch_walk"
-        : ReferenceEquals(clip, _asset.StrafeLeft) ? "strafe_left" : ReferenceEquals(clip, _asset.StrafeRight) ? "strafe_right"
-        : ReferenceEquals(clip, _asset.WalkBack) ? "walk_back" : "?";
+    private string Name(ModernClip clip) => _asset.NameOf(clip);
 
     /// <summary>Gets where the rifle's muzzle and the end of its stock are, in the soldier's frame, metres, as last posed; null without one.</summary>
     public (Vector3 Muzzle, Vector3 Stock)? GunEnds
@@ -434,8 +442,8 @@ internal sealed class ModernBody : IDisposable
 
     // A pair of clips where the body is in them now.
     private ModernMix Mix(ModernClip stand, ModernClip move) =>
-        new(stand, ReferenceEquals(stand, _act) ? _actTime : ReferenceEquals(stand, _asset.TurnLeft) || ReferenceEquals(stand, _asset.TurnRight) ? _turnTime : _standTime,
-            move, _stride * move.Duration, Smooth(_moveWeight));
+        new(stand, ReferenceEquals(stand, _act) ? _actTime : _standTime, move, _stride * move.Duration, Smooth(_moveWeight),
+            _turnClip, _turnTime, Smooth(_turnWeight));
 
     /// <summary>Above this turn rate, in radians a second, a soldier standing still steps his turn.</summary>
     public const float TurnAboveRadiansPerSecond = 0.6f;
@@ -454,6 +462,15 @@ internal sealed class ModernBody : IDisposable
     private float _turnTime;
     private float _turnFor;
     private bool _turnLeft;
+    private float _turnRate;
+    private ModernClip? _turnClip;
+    private float _turnWeight;
+
+    /// <summary>How long a turn's steps take to come in under his stance, and to go, in seconds.</summary>
+    public const float TurnBlendSeconds = 0.12f;
+
+    /// <summary>Gets how far through its length the turn clip is, as a fraction, for testing.</summary>
+    internal float TurnPhaseForTesting => _turnClip is { } clip ? _turnTime / clip.Duration : 0f;
 
     /// <summary>How long a turn on the spot is stepped at least, in seconds.</summary>
     public const float TurnHoldSeconds = 0.35f;

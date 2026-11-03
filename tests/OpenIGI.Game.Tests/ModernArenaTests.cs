@@ -33,6 +33,67 @@ public sealed class ModernArenaTests(ITestOutputHelper output)
         Assert.True(sure < 13 + 30, $"he took {sure / 30.0:0.00}s to fight back");
     }
 
+    /// <summary>Shot at from behind, or hit there: how long he takes to face the shooter and fight back.</summary>
+    [RequiresGameDataTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ShotFromBehindHeTurnsAndFights(bool hit)
+    {
+        bool previous = GameplayCVars.ModernAi.Value;
+        GameplayCVars.ModernAi.Value = true;
+        try
+        {
+            ModernArena arena = new();
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            // Facing away from the player: he is behind, 13 m off.
+            Igi1HumanAi soldier = arena.Patrol(ModernArena.At(15, 5), MathF.PI, text => story.Add($"{tick / 30.0:0.00}s {text}"));
+            Vector3d feet = ModernArena.At(15, 18);
+            Vector3d eye = feet + new Vector3d(0, 0, 1.6 * Metre);
+            int facing = -1, engaged = -1;
+            for (tick = 1; tick <= 8 * 30; tick++)
+            {
+                if (tick == 15)
+                {
+                    Vector3d aim = soldier.Position + new Vector3d(hit ? 0.0 : 1.0 * Metre, 0, 1.2 * Metre);
+                    story.Add($"{tick / 30.0:0.00}s -- player fires from behind, {(arena.Shoot(soldier, eye, aim, heard: 0.0) ? "hits" : "misses")}");
+                }
+
+                arena.Tick(soldier, tick, feet);
+                double toPlayer = Math.Atan2(-(feet.X - soldier.Position.X), feet.Y - soldier.Position.Y);
+                double off = Math.Abs(Math.IEEERemainder(soldier.Facing - toPlayer, 2 * Math.PI));
+                if (facing < 0 && off < 0.35)
+                {
+                    facing = tick;
+                    story.Add($"{tick / 30.0:0.00}s == faces the player");
+                }
+
+                if (engaged < 0 && soldier.Activity == AiSoldierActivity.Engaging)
+                {
+                    engaged = tick;
+                    story.Add($"{tick / 30.0:0.00}s == engaging");
+                }
+
+                if (tick % 15 == 0 && engaged < 0)
+                {
+                    story.Add(FormattableString.Invariant($"{tick / 30.0:0.00}s    facing {off * 180 / Math.PI:0} degrees off the player"));
+                }
+            }
+
+            output.WriteLine($"{(hit ? "hit" : "near miss")} from behind at 0.50s: faces the player at {facing / 30.0:0.00}s, engaging at {engaged / 30.0:0.00}s");
+            output.WriteLine(string.Join(Environment.NewLine, story));
+
+            // Into the fight at once, round to face the shooter as a man turns -- not in a tick, and not never.
+            Assert.InRange(engaged, 15, 15 + 15);
+            Assert.InRange(facing, 15 + 9, 15 + 36);
+        }
+        finally
+        {
+            GameplayCVars.ModernAi.Value = previous;
+        }
+    }
+
     /// <summary>
     /// The play-test's cover loop: the player strafing at a run while he fires, so cover hidden from where he was is open from
     /// where he is a second later. The guard should not go back to a place he was just seen in, nor run from cover to cover

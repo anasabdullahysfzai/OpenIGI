@@ -153,6 +153,9 @@ public sealed partial class Igi1HumanAi
         StepBody();
     }
 
+    /// <summary>The most the modern AI turns in a tick, in radians: 240 degrees a second, an about-face in three quarters of one.</summary>
+    public const double ModernTurnPerTick = (240.0 * Math.PI / 180.0) / 30.0;
+
     // This tick's crouched or strafed step, set by the modern fight: the stride's scale, and whether it goes along the way.
     private (double Scale, bool Along)? _stepStyle;
 
@@ -171,7 +174,16 @@ public sealed partial class Igi1HumanAi
             return;
         }
 
-        Facing = Igi1AiGeometry.Wrap((float)(Facing + _bodyTurn.Step(turn)));
+        // The modern AI turns on the spot as a man can, half a turn in three quarters of a second at most: the original's turn
+        // comes round in a tick or two, which on a modern body is a snap. Not on the move: a runner held to it overshot his
+        // waypoints and circled them for good.
+        double turned = _bodyTurn.Step(turn);
+        if (GameplayCVars.ModernAi.Value && Math.Abs(_rootMotionThisTick) < 1.0 && Math.Abs(_rootLateralThisTick) < 1.0)
+        {
+            turned = Math.Clamp(turned, -ModernTurnPerTick, ModernTurnPerTick);
+        }
+
+        Facing = Igi1AiGeometry.Wrap((float)(Facing + turned));
         ViewPitch = Math.Clamp((float)(ViewPitch + _viewPitchTurn.Step(pitch)), -MathF.PI / 2f, MathF.PI / 2f);
 
         // The clip's delta, rotated by the turned body into the world, every tick and whatever the AI asked
