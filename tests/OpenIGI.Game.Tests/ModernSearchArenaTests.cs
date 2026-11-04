@@ -60,6 +60,8 @@ public sealed class ModernSearchArenaTests(ITestOutputHelper output)
             output.WriteLine(string.Join("\n", story.Where(line => !line.Contains("sight", StringComparison.Ordinal) && !line.Contains("sees the", StringComparison.Ordinal))));
             output.WriteLine($"places: {string.Join(" | ", places.Select(spots => string.Join(",", spots)))}");
             Assert.Equal(3, story.Count(line => line.Contains("lost him; hunts", StringComparison.Ordinal)));
+            Assert.Contains(story, line => line.Contains("says: lost", StringComparison.Ordinal));
+            Assert.Contains(story, line => line.Contains("says: clear", StringComparison.Ordinal));
             Assert.True(scanned, "nobody knelt to look about");
             Assert.All(places, spots => Assert.True(spots.Count >= 3, "he did not walk his search"));
             Assert.True(places[0].Intersect(places[1]).Count() < places[0].Count, "they searched the same places");
@@ -95,6 +97,8 @@ public sealed class ModernSearchArenaTests(ITestOutputHelper output)
             int saw = story.FindIndex(line => line.Contains("finder: sees a team-mate down", StringComparison.Ordinal));
             int check = story.FindIndex(line => line.Contains("finder: checks the body", StringComparison.Ordinal));
             int wave = story.FindIndex(line => line.Contains("finder: waves the squad on", StringComparison.Ordinal));
+            Assert.Contains(story, line => line.Contains("finder: says: mandown", StringComparison.Ordinal));
+            Assert.Contains(story, line => line.Contains("finder: says: advance", StringComparison.Ordinal));
             Assert.InRange(saw, 0, check);
             Assert.InRange(check, 0, wave);
             Assert.Contains(story, line => line.Contains("other: lost him; hunts", StringComparison.Ordinal));
@@ -137,6 +141,72 @@ public sealed class ModernSearchArenaTests(ITestOutputHelper output)
             Assert.Equal((0, 0), blind.SearchGestures);
             Assert.False(blind.IsOnEdge, "he noticed a body behind him");
         });
+    }
+
+    /// <summary>
+    /// A squad with cover in reach fights from it: few positions in the open, none far from the player when nearer ones will do.
+    /// </summary>
+    [RequiresGameDataFact]
+    public void ASquadFightsFromCoverAndAtAUsefulRange()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(60.0)
+                .Box(14, 20, 0, 18, 20.6, 1.0).Box(28, 20, 0, 32, 20.6, 1.0).Box(42, 20, 0, 46, 20.6, 1.0)
+                .Box(21, 24, 0, 22.5, 25.5, 3.0).Box(37, 24, 0, 38.5, 25.5, 3.0)
+                .Box(8, 30, 0, 12, 30.6, 1.0).Box(48, 30, 0, 52, 30.6, 1.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            List<Igi1HumanAi> guards = [];
+            foreach ((double x, int id) in new[] { (20.0, 1), (30.0, 2), (40.0, 3) })
+            {
+                guards.Add(arena.Patrol(ModernArena.At(x, 10), 0f, story.Add, seed: id + 30));
+            }
+
+            Vector3d player = ModernArena.At(30, 40);
+            for (tick = 1; tick <= 45 * 30; tick++)
+            {
+                player = ModernArena.At(30 + (10 * Math.Sin(tick / 120.0)), 40);
+                foreach (Igi1HumanAi guard in guards)
+                {
+                    arena.Tick(guard, tick, player);
+                }
+            }
+
+            List<string> positions = [.. story.Where(line => line.Contains(" a position ", StringComparison.Ordinal))];
+            int open = positions.Count(line => line.Contains("no cover", StringComparison.Ordinal));
+            double furthest = positions.Select(line =>
+                double.Parse(line.Split(", ")[1].Split(" m from")[0], System.Globalization.CultureInfo.InvariantCulture)).DefaultIfEmpty().Max();
+            output.WriteLine($"POSITIONS {positions.Count}, in the open {open}, furthest {furthest:0.0} m");
+            output.WriteLine(string.Join("\n", positions));
+            Assert.True(positions.Count >= 3, "they took no positions");
+            Assert.True(open * 4 <= positions.Count, $"{open} of {positions.Count} positions in the open");
+            Assert.True(furthest <= 32.0, $"a position {furthest:0.0} m from him");
+        });
+    }
+
+    /// <summary>Every callout a guard can say is on disk for each voice, and reads as the sound the game plays.</summary>
+    [Fact]
+    public void EveryCalloutFileReadsAsPlayableSound()
+    {
+        string folder = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../../voices/callouts"));
+        if (!Directory.Exists(folder))
+        {
+            return; // the voices are generated beside the checkout, not kept in it
+        }
+
+        foreach (string key in new[] { "flank", "cover", "grenade", "pinned", "reload", "lost", "mandown", "advance", "clear" })
+        {
+            foreach ((int voice, int wording) in new[] { (0, 1), (0, 2), (1, 1), (1, 2), (2, 1), (2, 2) })
+            {
+                (OpenIGI.Audio.AudioFormat Format, byte[] Pcm)? read =
+                    OpenIGI.Game.Igi1.World.Igi1MissionAudio.ReadWave(File.ReadAllBytes(Path.Combine(folder, $"callout_{voice}_{key}_{wording}.wav")));
+                Assert.NotNull(read);
+                Assert.Equal(new OpenIGI.Audio.AudioFormat(22050, 1, 16), read.Value.Format);
+                Assert.InRange(read.Value.Pcm.Length, 22050 / 4, 22050 * 2 * 4);
+            }
+        }
     }
 
     private static void With(Action run)

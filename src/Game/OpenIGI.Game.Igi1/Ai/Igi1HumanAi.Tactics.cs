@@ -42,6 +42,18 @@ public sealed partial class Igi1HumanAi
     /// <summary>How long without the player in view from his firing spot before he moves to find him again, in ticks.</summary>
     public const int UnseenTicks = 2 * 30;
 
+    /// <summary>How long a man just out of sight still counts as seen in a fight, in ticks.</summary>
+    public const int SightMemoryTicks = 20;
+
+    /// <summary>What a firing position with nowhere to get down costs against one with, in the score's terms: a walk of some 40 metres at most.</summary>
+    public const double NoCoverCost = 25.0;
+
+    /// <summary>What cover from where the player stands now, but not from a step or two either side of him, costs in the same terms.</summary>
+    public const double PartialCoverCost = 8.0;
+
+    /// <summary>Further from the player than this, in metres, a soldier takes no place that is further still.</summary>
+    public const double FarRangeMetres = 30.0;
+
     /// <summary>How long a place he was seen in while down stays off his list, in ticks.</summary>
     public const int SeenDownTicks = 10 * 30;
 
@@ -192,8 +204,11 @@ public sealed partial class Igi1HumanAi
 
         // What he knows: the player where he sees him, else where any of them last did.
         Vector3d feet = LiveTargetFeet(enemy);
-        bool seen = TargetSlot.IsVisible;
-        if (seen)
+        bool seesNow = TargetSlot.IsVisible;
+
+        // A moment out of sight is not losing him: he remembers a man who flickers behind a post, and does not change his mind.
+        bool seen = seesNow || (_lastSeenTick > 0 && tick - _lastSeenTick < SightMemoryTicks);
+        if (seesNow)
         {
             (_lastKnown, _lastSeenTick) = (feet, tick);
             _squad?.Saw(feet, tick);
@@ -300,6 +315,7 @@ public sealed partial class Igi1HumanAi
                     {
                         _pinnedSaid = true;
                         ModernLog?.Invoke("is pinned down");
+                        Say("pinned");
                     }
                 }
 
@@ -371,6 +387,7 @@ public sealed partial class Igi1HumanAi
             _patrolOneShotChild = AiPatrolAction.ThrowGrenade;
             WriteChannel(AiCombatChannel.ThrowGrenade, 1f);
             ModernLog?.Invoke(FormattableString.Invariant($"throws a grenade to flush him out ({reach:0.0} m)"));
+            Say("grenade");
             return true;
         }
 
@@ -380,12 +397,18 @@ public sealed partial class Igi1HumanAi
         {
             _suppressingSaid = true;
             ModernLog?.Invoke("keeps him pinned while a squad mate flanks");
+            Say("cover");
         }
 
         _suppressingSaid &= suppressing;
         _channelWrites.Clear();
         HoldPosture();
         RunSharedSubAction(enemy, _weapon!(), suppressing ? AimPointOf(target, TargetCrouching) : null);
+        if (Combat.PressReload || Combat.ReloadWeaponDirectly)
+        {
+            Say("reload");
+        }
+
         if (!_combatInstalled)
         {
             return true;
@@ -411,6 +434,7 @@ public sealed partial class Igi1HumanAi
                 (_fireNode, _downNode, _downLow) = (-1, refuge, low);
                 (_moveStyle, _tactic, _phaseSince, _pendingDown) = (MoveStyle.Run, TacticPhase.Moving, tick, true);
                 _downUntil = tick + DownTicks + NextBounded(DownMoreTicks);
+                Say("pinned");
                 ModernLog?.Invoke(FormattableString.Invariant(
                     $"is pinned in the open: runs for cover {Vector3d.Distance(Position, _graph!.NodeAt(refuge)!.Position) / GraphNode.MetreInUnits:0.0} m away (node {refuge})"));
                 return true;
@@ -558,8 +582,19 @@ public sealed partial class Igi1HumanAi
         _tactic = TacticPhase.Moving;
         _phaseSince = tick;
         _holdUntil = tick + HoldTicks + NextBounded(HoldMoreTicks);
+        if (!low && down < 0)
+        {
+            // In the open, a man does not linger.
+            _holdUntil = tick + HoldTicks;
+        }
+
         _pendingDown = false;
         GraphNode at = _graph!.NodeAt(fire)!;
+        if (flanker)
+        {
+            Say("flank");
+        }
+
         string cover = low ? "low cover" : down >= 0 ? "cover beside it" : "no cover";
         ModernLog?.Invoke(FormattableString.Invariant(
             $"{why}: {(flanker ? "flanks to" : "takes")} a position {Vector3d.Distance(Position, at.Position) / GraphNode.MetreInUnits:0.0} m away, {Flat(at.Position, target) / GraphNode.MetreInUnits:0.0} m from him, {cover} (node {fire})"));
@@ -590,6 +625,7 @@ public sealed partial class Igi1HumanAi
 
         (int, int, bool)? best = null;
         double bestScore = double.MaxValue;
+        double nowRange = Flat(Position, target);
         foreach (GraphNode node in _graph!.Nodes)
         {
             double away = Vector3d.Distance(Position, node.Position);
@@ -597,6 +633,12 @@ public sealed partial class Igi1HumanAi
             if (away > reach || range < ClosestRangeMetres * metre || node.Id == notHere || (notHere >= 0 && node.Id == standing) || (node.Criteria & GraphNodeCriteria.View) != 0
                 || _seenDownUntil.GetValueOrDefault(node.Id, -1) > _lastTick
                 || (_occupancy is not null && !_occupancy.IsClaimedBy(_graph, node.Id, this) && _occupancy.IsFull(_graph, node.Id)))
+            {
+                continue;
+            }
+
+            // Far off already, no place further still: he comes on, by another place or by advancing (Advance).
+            if (range > FarRangeMetres * metre && range >= nowRange)
             {
                 continue;
             }
@@ -626,7 +668,19 @@ public sealed partial class Igi1HumanAi
                 down = FindDown(node, eyes);
             }
 
-            score += low ? 0.0 : down >= 0 ? 2.0 : 10.0;
+            double cost = low ? 0.0 : down >= 0 ? 2.0 : NoCoverCost;
+
+            // Nothing that hides him wherever the player steps: something that hides him from where the player is now is still
+            // better than the open. If the player comes round it, he is seen down, and moves.
+            if (!low && down < 0)
+            {
+                Vector3d[] here = [eye];
+                low = Hidden(eye, node, KneelChestMetres) && Hidden(eye, node, KneelHeadMetres);
+                down = low ? -1 : FindDown(node, here);
+                cost = low || down >= 0 ? PartialCoverCost : NoCoverCost;
+            }
+
+            score += cost;
             if (score < bestScore)
             {
                 (best, bestScore) = ((node.Id, down, low), score);

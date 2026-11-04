@@ -336,6 +336,13 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "The .glb file of the modern soldier character: a skinned mesh with 'idle' and 'walk' clips.");
 
+    /// <summary>The folder of the modern AI's spoken callouts, <c>callout_voice_key_variant.wav</c>; empty for none.</summary>
+    public static readonly StringCVar CalloutDirectory = CVar.Text(
+        "g_callout_dir",
+        string.Empty,
+        CVarOptions.Archive,
+        "The folder of the guards' spoken callouts (callout_voice_key_variant.wav); empty for none.");
+
     /// <summary>How far the modern character is turned about up, in degrees, for one authored facing another way.</summary>
     public static readonly NumericCVar<float> ModernBodyYaw = CVar.Float(
         "g_modern_body_yaw",

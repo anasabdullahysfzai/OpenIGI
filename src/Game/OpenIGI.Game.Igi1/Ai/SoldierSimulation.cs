@@ -991,6 +991,14 @@ public sealed partial class SoldierSimulation : IHumanEvents
             LastDetectionShoutTick = TickCount;
         }
 
+        // The modern AI's spoken callouts: each guard his own voice of three, either of two wordings.
+        if (brain.CalloutThisTick is { } said)
+        {
+            int speaker = Math.Abs(view.Soldier.Id) % 3;
+            int wording = checked((int)AiRandom.NextBounded(2) + 1);
+            ScriptSound?.Invoke($"callout_{speaker}_{said}_{wording}", brain.Position, null);
+        }
+
         // An engaged guard pulls in the guards beside it: AIEVENT_ALERT with a 7 m reach and filter
         // 0x26, so only its own side admits it (sub_48A920 -> sub_48AB10). This is how one guard's
         // fight wakes the room even before anybody fires.

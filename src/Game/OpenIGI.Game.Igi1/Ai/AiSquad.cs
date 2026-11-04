@@ -59,6 +59,28 @@ public sealed class AiSquad
     /// <returns>Whether he is the first to.</returns>
     public bool NoticeBody(int id) => _bodies.Add(id);
 
+    private readonly Dictionary<string, int> _saidAt = [];
+    private int _saidLast = int.MinValue / 2;
+
+    /// <summary>How long after anyone in the squad speaks another may, and how long before the same thing is said again, in ticks.</summary>
+    public const int SpeakGapTicks = 2 * 30, SameThingTicks = 8 * 30;
+
+    /// <summary>Whether a member may say something now, so they talk in turn and do not repeat themselves; notes it if so.</summary>
+    /// <param name="key">What he would say.</param>
+    /// <param name="tick">The tick.</param>
+    /// <returns>Whether he says it.</returns>
+    public bool MaySay(string key, int tick)
+    {
+        if (tick - _saidLast < SpeakGapTicks || (_saidAt.TryGetValue(key, out int said) && tick - said < SameThingTicks))
+        {
+            return false;
+        }
+
+        _saidLast = tick;
+        _saidAt[key] = tick;
+        return true;
+    }
+
     /// <summary>How long a node stays taken by a soldier searching from it, in ticks.</summary>
     public const int SearchNodeTicks = 30 * 30;
 

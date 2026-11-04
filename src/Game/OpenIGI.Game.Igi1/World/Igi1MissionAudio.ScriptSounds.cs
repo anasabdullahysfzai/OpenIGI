@@ -24,6 +24,11 @@ public sealed partial class Igi1MissionAudio
             return;
         }
 
+        if (TryPlayCallout(sounds, name, position))
+        {
+            return;
+        }
+
         AudioVoiceHandle voice = sounds.PlayDefinition(name, position, priority: ScriptSoundPriority);
         if (follow is not null && voice != AudioVoiceHandle.None)
         {

@@ -59,6 +59,7 @@ public sealed partial class Igi1HumanAi
     private Vector3d? _huntPlace, _bodyPlace;
     private IReadOnlyList<AiDetectionCandidate> _offeredHumans = [];
     private int _searchCallSeen = int.MinValue;
+    private bool _answeringCall;
 
     private bool _searching;
 
@@ -116,9 +117,16 @@ public sealed partial class Igi1HumanAi
         if (!_searching && (_bodyPlace ?? _huntPlace) is { } hunted)
         {
             bool body = _bodyPlace is not null;
+            bool answering = _answeringCall;
+            _answeringCall = false;
             (_bodyPlace, _huntPlace, _investigationWalked) = (null, null, false);
             PlanSearch(hunted, hunting: true, checkBody: body);
             ModernLog?.Invoke($"{(body ? "goes to check a body" : "lost him; hunts where he was last seen")} ({_searchSteps.Count} steps)");
+            if (!body && !answering)
+            {
+                Say("lost");
+            }
+
         }
 
         if (!_searching)
@@ -165,6 +173,7 @@ public sealed partial class Igi1HumanAi
         _searching = false;
         _onEdgeUntilTick = _lastTick + OnEdgeTicks;
         ModernLog?.Invoke("search over; back to patrol, on edge");
+        Say("clear");
     }
 
     /// <summary>Ends a search where it stands, without the time on edge a finished one leaves.</summary>
@@ -199,6 +208,7 @@ public sealed partial class Igi1HumanAi
                 SearchGestures = (SearchGestures.Checks, SearchGestures.Signals + 1);
                 _squad?.CallSearch(point, _lastTick);
                 ModernLog?.Invoke("waves the squad on");
+                Say("advance");
                 break;
         }
     }
@@ -233,6 +243,7 @@ public sealed partial class Igi1HumanAi
         if (first && Arm == AiCombatArm.Patrol && !_searching)
         {
             ModernLog?.Invoke("sees a team-mate down");
+            Say("mandown");
             _bodyPlace = friend.Candidate.Feet;
         }
     }
@@ -250,6 +261,7 @@ public sealed partial class Igi1HumanAi
         if (Arm == AiCombatArm.Patrol && !_searching && _bodyPlace is null && Vector3d.Distance(Position, call.Place) <= SearchCallInUnits)
         {
             _huntPlace = call.Place;
+            _answeringCall = true;
         }
     }
 

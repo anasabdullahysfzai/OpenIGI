@@ -42,6 +42,19 @@ public sealed partial class Igi1HumanAi
     /// <summary>Gets or sets his task's id in the mission, which the test settings name him by.</summary>
     public int GuardId { get; set; } = -1;
 
+    /// <summary>Gets what he says this tick (a callout's key); null for nothing.</summary>
+    public string? CalloutThisTick { get; private set; }
+
+    // Says something aloud, if it is his turn in the squad.
+    private void Say(string key)
+    {
+        if (GameplayCVars.ModernAi.Value && (_squad?.MaySay(key, _lastTick) ?? true))
+        {
+            CalloutThisTick = key;
+            ModernLog?.Invoke($"says: {key}");
+        }
+    }
+
     /// <summary>Gets how many stops he has made on his patrols, which tells a body when a new one begins.</summary>
     public int PatrolStops { get; private set; }
 

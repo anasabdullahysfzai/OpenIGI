@@ -344,6 +344,7 @@ public sealed partial class Igi1HumanAi
         _tenseRunThisTick = false;
         Combat = new AiCombatCommand();
         DetectionShoutRequestedThisTick = false;
+        CalloutThisTick = null;
         AlertPingDueThisTick = false;
 
         // A scripted one-shot clip releases the animation slot the moment the renderer says it ended, so the
