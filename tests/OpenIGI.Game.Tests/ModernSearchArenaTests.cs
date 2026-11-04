@@ -86,7 +86,7 @@ public sealed class ModernSearchArenaTests(ITestOutputHelper output)
             Vector3d player = ModernArena.At(30, 50), body = ModernArena.At(30, 18);
             for (tick = 1; tick <= 60 * 30; tick++)
             {
-                arena.Tick(finder, tick, player, body);
+                arena.Tick(finder, tick, player, body, other.Position);
                 arena.Tick(other, tick, player);
             }
 
@@ -98,6 +98,32 @@ public sealed class ModernSearchArenaTests(ITestOutputHelper output)
             Assert.InRange(saw, 0, check);
             Assert.InRange(check, 0, wave);
             Assert.Contains(story, line => line.Contains("other: lost him; hunts", StringComparison.Ordinal));
+
+            // With nobody about he checks the body and searches, and waves to no one.
+            ModernArena empty = new ModernArena(60.0).Box(0, 40, 0, 60, 41, 4.0);
+            empty.Build();
+            List<string> alone = [];
+            Igi1HumanAi lone = empty.Patrol(ModernArena.At(30, 10), 0f, alone.Add, seed: 24);
+            for (tick = 1; tick <= 40 * 30; tick++)
+            {
+                empty.Tick(lone, tick, player, body);
+            }
+
+            output.WriteLine(string.Join("\n", alone));
+            Assert.Equal((1, 0), lone.SearchGestures);
+            Assert.Contains("nobody to wave to", alone);
+            Assert.Contains(alone, line => line.StartsWith("search over", StringComparison.Ordinal));
+
+            // A mate behind a wall does not see him wave either.
+            ModernArena walled = new ModernArena(60.0).Box(0, 40, 0, 60, 41, 4.0).Box(25, 24, 0, 35, 25, 4.0);
+            walled.Build();
+            Igi1HumanAi behind = walled.Patrol(ModernArena.At(30, 12), 0f, _ => { }, seed: 24);
+            for (tick = 1; tick <= 40 * 30; tick++)
+            {
+                walled.Tick(behind, tick, player, ModernArena.At(30, 20), ModernArena.At(30, 30));
+            }
+
+            Assert.Equal((1, 0), behind.SearchGestures);
 
             // The same body behind a lone guard.
             ModernArena second = new ModernArena(60.0).Box(0, 40, 0, 60, 41, 4.0);

@@ -215,7 +215,8 @@ internal sealed class ModernArena
     /// <param name="tick">The tick.</param>
     /// <param name="playerFeet">Where the player stands.</param>
     /// <param name="bodyFeet">Where a dead team-mate lies, if one is on offer.</param>
-    public void Tick(Igi1HumanAi soldier, int tick, Vector3d playerFeet, Vector3d? bodyFeet = null)
+    /// <param name="mateFeet">Where a living team-mate stands, if one is on offer.</param>
+    public void Tick(Igi1HumanAi soldier, int tick, Vector3d playerFeet, Vector3d? bodyFeet = null, Vector3d? mateFeet = null)
     {
         double stride = soldier.WalksForward ? (soldier.Activity == AiSoldierActivity.Engaging ? 0.11 : 0.04) * Metre : 0.0;
         if (bodyFeet is { } lying)
@@ -224,7 +225,8 @@ internal sealed class ModernArena
             soldier.TickAmong(
                 tick,
                 [new AiDetectionCandidate(AiDetectionCandidate.PlayerId, true, true, Mark(playerFeet), playerFeet, false, null),
-                 new AiDetectionCandidate(99, false, false, Mark(lying), lying, false, null)],
+                 new AiDetectionCandidate(99, false, false, Mark(lying), lying, false, null),
+                 .. mateFeet is { } mate ? [new AiDetectionCandidate(98, false, true, Mark(mate), mate, false, null)] : Array.Empty<AiDetectionCandidate>()],
                 stride);
         }
         else

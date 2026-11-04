@@ -331,6 +331,7 @@ public sealed partial class Igi1HumanAi
         _lastTick = tick;
         _rootMotionThisTick = rootMotionThisTick;
         _rootLateralThisTick = rootMotionLateral;
+        _offeredHumans = candidates;
         OfferCandidates(candidates);
         _enemyAlive = TargetHuman?.Candidate.Alive ?? true;
 

@@ -1,5 +1,6 @@
 using OpenIGI.Core.Numerics;
 using OpenIGI.Formats.Ai;
+using OpenIGI.Game.Ai;
 
 namespace OpenIGI.Game.Igi1.Ai;
 
@@ -56,6 +57,7 @@ public sealed partial class Igi1HumanAi
     private readonly Queue<(Vector3d Point, bool Walk, Vector3d? LookAt, SearchAct Act)> _searchSteps = new();
     private int _actUntil = int.MinValue, _scanFrom = int.MinValue;
     private Vector3d? _huntPlace, _bodyPlace;
+    private IReadOnlyList<AiDetectionCandidate> _offeredHumans = [];
     private int _searchCallSeen = int.MinValue;
 
     private bool _searching;
@@ -139,6 +141,13 @@ public sealed partial class Igi1HumanAi
             ModernLog?.Invoke($"found nothing; searching ({_searchSteps.Count} steps)");
         }
 
+        // Nobody to wave to, nobody waved to: he gets on with it alone.
+        if (_searchSteps.TryPeek(out (Vector3d Point, bool Walk, Vector3d? LookAt, SearchAct Act) next) && next.Act == SearchAct.Signal && !MateInSight())
+        {
+            _searchSteps.Dequeue();
+            ModernLog?.Invoke("nobody to wave to");
+        }
+
         if (_searchSteps.TryDequeue(out (Vector3d Point, bool Walk, Vector3d? LookAt, SearchAct Act) step))
         {
             float seconds = step.Act switch
@@ -192,6 +201,23 @@ public sealed partial class Igi1HumanAi
                 ModernLog?.Invoke("waves the squad on");
                 break;
         }
+    }
+
+    // Whether a living team-mate is near enough and in plain sight to see him wave. The humans offered this tick are read only during it.
+    private bool MateInSight()
+    {
+        Vector3d eye = EyePosition();
+        foreach (AiDetectionCandidate human in _offeredHumans)
+        {
+            if (!human.OtherSide && human.Alive && human.Id != AiDetectionCandidate.PlayerId
+                && Vector3d.Distance(eye, human.Mark) <= SearchCallInUnits
+                && (_sight is null || _sight(eye, human.Mark, human.Id)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // A team-mate found dead: the first to see him goes and checks him, unless he is fighting; anyone else who sees him is on edge.
