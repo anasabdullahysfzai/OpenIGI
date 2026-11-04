@@ -166,6 +166,7 @@ internal sealed class SoldierBrainBinder(SoldierContext context, SoldierSightQue
                 brain.PlayerIsEnemy = view.Soldier.Team != _context.PlayerTeam;
                 _sight.BindViewTracking(brain, view);
                 brain.RuntimeId = index + 1;
+                brain.GuardId = view.Soldier.Id;
                 brain.SetResponseRouter(source =>
                 {
                     if (_context.BrainsByRuntimeId.TryGetValue(source, out Igi1HumanAi? recipient))

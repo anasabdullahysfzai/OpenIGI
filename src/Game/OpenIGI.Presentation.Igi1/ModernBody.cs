@@ -47,6 +47,7 @@ internal sealed class ModernBody : IDisposable
     private float _fallTime;
     private float _fallRaise = float.NaN;
     private float _floor;
+    private bool _gesture;
     private ModernClip? _hit;
     private Vector3[] _kick = [];
     private Vector3[] _kickSpeed = [];
@@ -326,7 +327,8 @@ internal sealed class ModernBody : IDisposable
         if (_act is { } act)
         {
             _actTime += TickSeconds;
-            if (_actTime >= act.Duration || (moving && !kneeling))
+            // (A gesture begins the tick he arrives, when he has still moved: only setting off again ends it.)
+            if (_actTime >= act.Duration || (moving && !kneeling && !(_gesture && _actTime < GestureGraceSeconds)) || (_gesture && aiming))
             {
                 _act = null;
             }
@@ -414,7 +416,7 @@ internal sealed class ModernBody : IDisposable
         SpringKicks();
         ModernMix mix = Mix(_stand, _move);
         _inertia.Step(TickSeconds);
-        _asset.Pose(mix, mix, 1f, _world, _skin, _hit, _hitTime, hitWeight, _kick.Length > 0 ? _kick : null, _inertia);
+        _asset.Pose(mix, mix, 1f, _world, _skin, _hit, _hitTime, hitWeight, _kick.Length > 0 ? _kick : null, _inertia, keepLegs: kneeling);
         Look(look, aiming && _act is null);
 
         // The rifle rides its bone, where the clip's hands carried it with its stock seated in the shoulder (baked in the
@@ -690,6 +692,65 @@ internal sealed class ModernBody : IDisposable
         }
     }
 
+    /// <summary>
+    /// Meets a line with the body as it was last skinned -- the triangles drawn -- in the soldier's frame, metres: the nearest one it
+    /// crosses either way, not the rifle's. What the player sees is what a round meets.
+    /// </summary>
+    /// <param name="from">Where the line starts.</param>
+    /// <param name="to">Where it ends.</param>
+    /// <param name="along">How far along it the triangle is, nought to one.</param>
+    /// <param name="part">The original rig's body part the triangle is a piece of (<see cref="ModernBodyAsset.TriangleParts"/>).</param>
+    /// <param name="normal">The triangle's normal, turned against the line.</param>
+    /// <returns>Whether it met one.</returns>
+    public bool TryMeet(Vector3 from, Vector3 to, out float along, out int part, out Vector3 normal)
+    {
+        (along, part, normal) = (float.MaxValue, -1, Vector3.Zero);
+        ushort[] indices = _asset.Indices;
+        int[] parts = _asset.TriangleParts;
+        Vector3 d = to - from;
+        for (int t = 0; t < parts.Length; t++)
+        {
+            if (parts[t] < 0)
+            {
+                continue;
+            }
+
+            // Möller and Trumbore's: the line against the triangle's two edges.
+            Vector3 a = Point(indices[t * 3]), e1 = Point(indices[(t * 3) + 1]) - a, e2 = Point(indices[(t * 3) + 2]) - a;
+            Vector3 p = Vector3.Cross(d, e2);
+            float det = Vector3.Dot(e1, p);
+            if (MathF.Abs(det) < 1e-12f)
+            {
+                continue;
+            }
+
+            Vector3 s = (from - a) / det;
+            float u = Vector3.Dot(s, p);
+            if (u is < 0f or > 1f)
+            {
+                continue;
+            }
+
+            Vector3 q = Vector3.Cross(s, e1);
+            float v = Vector3.Dot(d, q), at = Vector3.Dot(e2, q);
+            if (v < 0f || u + v > 1f || at < 0f || at > 1f || at >= along)
+            {
+                continue;
+            }
+
+            Vector3 n = Vector3.Normalize(Vector3.Cross(e1, e2));
+            (along, part, normal) = (at, parts[t], Vector3.Dot(n, d) > 0f ? -n : n);
+        }
+
+        return part >= 0;
+    }
+
+    private Vector3 Point(int vertex)
+    {
+        Vector3f p = _vertices[vertex].Position;
+        return new Vector3(p.X, p.Y, p.Z);
+    }
+
     // A pair of clips where the body is in them now.
     private ModernMix Mix(ModernClip stand, ModernClip move) =>
         new(stand, ReferenceEquals(stand, _act) ? _actTime : _standTime, move, _stride * move.Duration, Smooth(_moveWeight),
@@ -731,9 +792,16 @@ internal sealed class ModernBody : IDisposable
     {
         if (!ReferenceEquals(clip, ModernClip.None))
         {
-            (_act, _actTime) = (clip, 0f);
+            (_act, _actTime, _gesture) = (clip, 0f, false);
         }
     }
+
+    /// <summary>Plays a patrol stop's clip once over what he stands in: unlike <see cref="Act"/>, his rifle coming up ends it.</summary>
+    /// <param name="clip">The clip.</param>
+    public void Gesture(ModernClip clip) => (_act, _actTime, _gesture) = (clip, 0f, true);
+
+    /// <summary>How long a gesture's first moments ignore his moving, in seconds.</summary>
+    public const float GestureGraceSeconds = 0.5f;
 
     /// <summary>Works out how fast a character's walk clip covers ground, in metres a second, as its skeleton scales it.</summary>
     /// <remarks>Run once, as the character loads (<see cref="ModernBodyAsset.WalkMetresPerSecond"/>).</remarks>

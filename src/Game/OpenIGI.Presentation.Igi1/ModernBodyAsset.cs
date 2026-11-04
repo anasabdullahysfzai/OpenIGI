@@ -96,6 +96,57 @@ internal sealed class ModernBodyAsset : IDisposable
             .Select(b => (Node: Array.IndexOf(Names, "mixamorig:" + b.Bone), Radians: b.Degrees * MathF.PI / 180f))
             .Where(b => b.Node >= 0);
 
+    // The original rig's body part (HumanDamage.ZoneOfBodyPart) each Mixamo bone stands in for. A name that begins another comes
+    // after it ("Spine" after "Spine2"), a hand's fingers are the hand, and a bone named in none is the trunk's pelvis.
+    private static readonly (string Bone, int Part)[] PartOfBone =
+    [
+        ("LeftShoulder", 8), ("LeftForeArm", 9), ("LeftHand", 10), ("LeftArm", 8),
+        ("RightShoulder", 14), ("RightForeArm", 15), ("RightHand", 16), ("RightArm", 14),
+        ("LeftUpLeg", 20), ("LeftLeg", 21), ("LeftFoot", 22), ("LeftToe", 22),
+        ("RightUpLeg", 25), ("RightLeg", 26), ("RightFoot", 27), ("RightToe", 27),
+        ("Spine2", 3), ("Spine1", 2), ("Spine", 1), ("Neck", 4), ("Head", 5),
+    ];
+
+    private int[]? _triangleParts;
+
+    /// <summary>
+    /// Gets the original rig's body part each triangle is a piece of -- the part of the bone that moves its first corner most --
+    /// or -1 for the rifle's, which a round passes through: what a round that meets the triangle scores by.
+    /// </summary>
+    public int[] TriangleParts => _triangleParts ??= BuildTriangleParts();
+
+    private int[] BuildTriangleParts()
+    {
+        int[] partOfNode = [.. Names.Select(name =>
+            name == "weapon" ? -1
+            : PartOfBone.FirstOrDefault(b => name.StartsWith("mixamorig:" + b.Bone, StringComparison.Ordinal)) is { Bone: not null } b ? b.Part
+            : 0)];
+        int[] parts = new int[Indices.Length / 3];
+        for (int t = 0; t < parts.Length; t++)
+        {
+            (Vector4 joints, Vector4 weights) = Weights[Indices[t * 3]];
+            int most = 0;
+            for (int k = 1; k < 4; k++)
+            {
+                most = weights[k] > weights[most] ? k : most;
+            }
+
+            parts[t] = partOfNode[Joints[(int)joints[most]].Node];
+        }
+
+        foreach ((int offset, int count, _, _) in Subsets.Where(s => s.Gun))
+        {
+            Array.Fill(parts, -1, offset / 3, count / 3);
+        }
+
+        return parts;
+    }
+
+    private static readonly string[] StopClipNames = ["stop_look", "stop_legs"];
+
+    /// <summary>Gets what he may do at a stop on his patrol; none where the character has no such clips.</summary>
+    public IReadOnlyList<ModernClip> StopClips { get; private set; } = [];
+
     /// <summary>Gets a node's first child, which the bone runs to, or -1.</summary>
     /// <param name="node">The node.</param>
     /// <returns>The child.</returns>
@@ -450,6 +501,8 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.Reload = Optional("reload", travelling: false, ModernClip.None);
         asset.KneelReload = Optional("kneel_reload", travelling: false, asset.Reload);
         asset.Throw = Optional("throw", travelling: false, ModernClip.None);
+        asset.StopClips = [.. StopClipNames
+            .Select(name => Optional(name, travelling: false, ModernClip.None)).Where(clip => !ReferenceEquals(clip, ModernClip.None))];
         asset.CrouchWalk = Optional("crouch_walk", travelling: true, asset.AimWalk);
         asset.StrafeLeft = Optional("strafe_left", travelling: true, asset.AimWalk);
         asset.StrafeRight = Optional("strafe_right", travelling: true, asset.AimWalk);
@@ -539,10 +592,12 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="hitWeight">How much of the flinch.</param>
     /// <param name="kicks">Each node's kick (<see cref="ModernBody.Kick"/>), a turn about its joint in glTF's world: the axis times the angle in radians.</param>
     /// <param name="inertia">The blend from the clips before (<see cref="ModernInertia"/>), or null to fade from <paramref name="before"/>.</param>
+    /// <param name="keepLegs">Whether the flinch leaves his hips and legs to the clips -- he kneels, and a standing stumble's legs
+    /// would stand him up -- and moves only what is above them.</param>
     public void Pose(
         in ModernMix now, in ModernMix before, float fade, Matrix4x4[] world, Matrix4x4[] skin, ModernClip? hit, float hitTime, float hitWeight, Vector3[]? kicks = null,
-        ModernInertia? inertia = null) =>
-        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight, kicks, inertia);
+        ModernInertia? inertia = null, bool keepLegs = false) =>
+        Blend(now, before, fade, world, skin, hit, hitTime, hitWeight, kicks, inertia, keepLegs);
 
     /// <summary>Poses the skeleton in one fall, held on its last frame once it has run.</summary>
     /// <param name="fall">The fall (<see cref="Death"/>).</param>
@@ -566,10 +621,12 @@ internal sealed class ModernBodyAsset : IDisposable
         float overTime = 0f,
         float overWeight = 0f,
         Vector3[]? kicks = null,
-        ModernInertia? inertia = null)
+        ModernInertia? inertia = null,
+        bool keepLegs = false)
     {
         for (int node = 0; node < Rest.Length; node++)
         {
+            bool flinches = over is not null && overWeight > 0f && !(keepLegs && (LegNodes[node] || node == over.TravelNode));
             (Vector3 t, Quaternion r, Vector3 s) = Mix(now, node);
             if (fade < 1f)
             {
@@ -580,7 +637,7 @@ internal sealed class ModernBodyAsset : IDisposable
             }
 
             // A flinch over whatever he is doing, its own slide taken out like a fall's.
-            if (over is not null && overWeight > 0f && over.Layered && !ArmNodes[node])
+            if (flinches && over!.Layered && !ArmNodes[node])
             {
                 // A layered reaction is added, not swapped in: only how it moves away from its own first frame, on top of
                 // whatever stance he is in, so the rifle stance keeps its facing and the jolt, twist and stumble are added.
@@ -596,7 +653,7 @@ internal sealed class ModernBodyAsset : IDisposable
 
                 t += shift * overWeight;
             }
-            else if (over is not null && overWeight > 0f && !over.Layered)
+            else if (flinches && !over!.Layered)
             {
                 (Vector3 T, Quaternion R, Vector3 S) h = over.Sample(node, overTime, Rest[node]);
                 if (node == over.TravelNode)

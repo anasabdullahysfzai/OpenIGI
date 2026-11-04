@@ -404,6 +404,15 @@ public static class GameplayCVars
         CVarOptions.None,
         "Aims this many metres beside the dev_bot_target soldier, for near misses (testing).");
 
+    /// <summary>How high above the soldier's feet the held aim is, in metres (testing).</summary>
+    public static readonly NumericCVar<float> BotHeight = CVar.Float(
+        "dev_bot_height",
+        1.2f,
+        0f,
+        2.5f,
+        CVarOptions.None,
+        "Aims this many metres above the dev_bot_target soldier's feet (testing).");
+
     /// <summary>A soldier whose modern body logs what it shows every tick (testing); -1 for none. Not retail.</summary>
     public static readonly NumericCVar<int> BodyLog = CVar.Int(
         "dev_body_log",
@@ -426,6 +435,24 @@ public static class GameplayCVars
         false,
         CVarOptions.None,
         "Holds the player's trigger down (testing).");
+
+    /// <summary>A weapon key, one to nine, the player holds down, for scripted fights (testing); 0 for none.</summary>
+    public static readonly NumericCVar<int> BotWeapon = CVar.Int(
+        "dev_bot_weapon",
+        0,
+        0,
+        9,
+        CVarOptions.None,
+        "Holds the player's weapon key 1-9 down while set (testing); 0 for none.");
+
+    /// <summary>A soldier whose brain kneels him while he patrols, for a test to watch the real kneel (testing); -1 for none.</summary>
+    public static readonly NumericCVar<int> ForceKneel = CVar.Int(
+        "dev_force_kneel",
+        -1,
+        -1,
+        int.MaxValue,
+        CVarOptions.None,
+        "Kneels this soldier while he patrols, as a crouch in his path would (testing); -1 for none.");
 
     /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
     /// <remarks>

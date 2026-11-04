@@ -247,7 +247,7 @@ public sealed partial class Igi1HumanAi
         if (GameplayCVars.ModernAi.Value && step > 1.0 && _route.Count > 0)
         {
             double original = step / GraphNode.MetreInUnits * AiCombatParameters.TicksPerSecond;
-            double wanted = style?.MetresPerSecond ?? (original > ModernRunAbove ? ModernRunMetresPerSecond : ModernWalkMetresPerSecond);
+            double wanted = style?.MetresPerSecond ?? (original > ModernRunAbove ? ModernRunMetresPerSecond : OwnWalkPace);
 
             // Up to speed and down from it as a man gets there, not in a tick: he gathers pace from a standstill, and brakes
             // so as to come to rest on the end of his walk, not at it full tilt.

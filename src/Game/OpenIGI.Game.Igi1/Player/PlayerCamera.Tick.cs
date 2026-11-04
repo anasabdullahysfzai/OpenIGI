@@ -37,6 +37,11 @@ public sealed partial class PlayerCamera
             frame[(int)PlayerInputSlot.Fire] = 1f;
         }
 
+        if (GameplayCVars.BotWeapon.Value > 0)
+        {
+            frame[(int)PlayerInputSlot.WeaponCategory1 + GameplayCVars.BotWeapon.Value - 1] = 1f;
+        }
+
         TickFrame(frame, terrain);
     }
 

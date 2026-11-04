@@ -27,6 +27,7 @@ public sealed partial class SoldierRenderer
     private readonly Dictionary<SoldierMember, double> _modernFallHeights = [];
     private readonly Dictionary<SoldierMember, double> _modernStandingHeights = [];
     private readonly Dictionary<SoldierMember, float> _modernRootTops = [];
+    private readonly Dictionary<SoldierMember, int> _modernStopsSeen = [];
     private readonly Dictionary<SoldierMember, int> _modernHitsSeen = [];
     private readonly Dictionary<SoldierMember, int> _modernLastHitTick = [];
     private readonly Dictionary<SoldierMember, (float Facing, bool Reloading, bool Throwing)> _modernLast = [];
@@ -65,6 +66,7 @@ public sealed partial class SoldierRenderer
         ModernBody body = member.Modern;
         if (forced.Length > 0 && !view.IsDead)
         {
+            TakeHit(member, body, asset, view);
             TickForcedPose(member, body, asset, forced);
             return;
         }
@@ -73,46 +75,19 @@ public sealed partial class SoldierRenderer
         bool kneeling = false, keepsDown = false;
         if (!view.IsDead)
         {
-            // A soldier with a brain is drawn at his clip's root height above the ground. His own flinch, kneel or crouch brings
-            // that down; the character only stands and walks, so the drop is given back and he stays on his feet. (Measured from
-            // the highest his root has stood, which is standing.)
-            // A kneel the character has a clip for is his own: it brings his hips down, and nothing is given back.
+            // A kneel the character has a clip for is his own.
             if (_sim.Brains.TryGetValue(view, out Igi1HumanAi? brain) && !ReferenceEquals(asset.KneelIdle, ModernClip.None)
                 && brain.CombatState is HumanSoldierStates.CrouchDownState
                     or (>= HumanSoldierStates.KneelingState and <= HumanSoldierStates.KneelReadyState))
             {
                 (kneeling, keepsDown) = (true, brain.KeepsDown);
             }
-            else if (brain is not null && brain.HasGroundQuery)
-            {
-                float top = Math.Max(_modernRootTops.GetValueOrDefault(member, view.RootSample.Z), view.RootSample.Z);
-                _modernRootTops[member] = top;
-                raise = (top - view.RootSample.Z) / (float)WorldScene.UnitsPerMetre;
-            }
+
+            raise = brain is not null && brain.HasGroundQuery ? Raise(member, view) : 0f;
 
             _modernStandingHeights[member] = member.TickWhere.Z + raise;
 
-            // A round that struck without killing: the character's own flinch, the way it pushed him.
-            if (view.LastHit.Count != _modernHitsSeen.GetValueOrDefault(member))
-            {
-                _modernHitsSeen[member] = view.LastHit.Count;
-                (float ahead, float right, int zone) = (view.LastHit.Ahead, view.LastHit.Right, view.LastHit.Zone);
-
-                // A captured reaction for where it struck and from where -- a heavy one when it came hard on the heels of
-                // another -- played over all of him but his arms, which keep the rifle. A limb also takes a small kick of its own.
-                int now = _sim.TickCount;
-                bool heavy = _modernLastHitTick.TryGetValue(member, out int last) && now - last <= HeavyHitTicks;
-                _modernLastHitTick[member] = now;
-                if (asset.Hit(ahead, right, zone, heavy) is { } hit)
-                {
-                    body.Flinch(hit);
-                }
-
-                if (zone < 12)
-                {
-                    body.Kick(zone, ahead, right, strength: 0.5f);
-                }
-            }
+            TakeHit(member, body, asset, view);
         }
         else
         {
@@ -176,10 +151,24 @@ public sealed partial class SoldierRenderer
             double lx = at.X - from.X, ly = at.Y - from.Y, f = fighter.Facing;
             look = new Vector3((float)((lx * Math.Cos(f)) + (ly * Math.Sin(f))), (float)((-lx * Math.Sin(f)) + (ly * Math.Cos(f))), (float)(at.Z - from.Z));
         }
+        else if (fighter?.PatrolGlance is { } glance)
+        {
+            look = new Vector3(MathF.Sin(glance), MathF.Cos(glance), 0f);
+        }
+
+        // A stop on his patrol: something to do with it, where the character has clips for one.
+        if (fighter is not null && fighter.PatrolStops != _modernStopsSeen.GetValueOrDefault(member))
+        {
+            _modernStopsSeen[member] = fighter.PatrolStops;
+            if (asset.StopClips.Count > 0)
+            {
+                body.Gesture(asset.StopClips[fighter.PatrolStopPick % asset.StopClips.Count]);
+            }
+        }
 
         body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming, member.Agent.ShotSequence, kneeling, keepsDown, turning,
             crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look);
-        if (GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
+        if (GameplayCVars.BodyLog.Value >= 0 && GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(
                 $"t{_sim.TickCount} {fighter.CoverState} state {fighter.CombatState} kneel {kneeling}: {body.Showing}"));
@@ -190,6 +179,42 @@ public sealed partial class SoldierRenderer
     private int _modernForcedTicks;
 
     // A test range's pose (dev_modern_pose), whatever the soldier is doing: the clips played on the spot at their own pace.
+    // A soldier with a brain is drawn at his clip's root height above the ground. His own flinch, kneel or crouch brings that
+    // down, but the character's clips carry their own hips -- his kneel too -- so the whole drop is given back, or a kneeling
+    // man struck sank onto his heels for the three seconds the original's flinch keeps its root low. (Measured from the highest
+    // his root has stood, which is standing.)
+    private float Raise(SoldierMember member, SoldierView view)
+    {
+        float top = Math.Max(_modernRootTops.GetValueOrDefault(member, view.RootSample.Z), view.RootSample.Z);
+        _modernRootTops[member] = top;
+        return (top - view.RootSample.Z) / (float)WorldScene.UnitsPerMetre;
+    }
+
+    // A round that struck without killing: the character's own flinch, the way it pushed him.
+    private void TakeHit(SoldierMember member, ModernBody body, ModernBodyAsset asset, SoldierView view)
+    {
+        if (view.LastHit.Count != _modernHitsSeen.GetValueOrDefault(member))
+        {
+            _modernHitsSeen[member] = view.LastHit.Count;
+            (float ahead, float right, int zone) = (view.LastHit.Ahead, view.LastHit.Right, view.LastHit.Zone);
+
+            // A captured reaction for where it struck and from where -- a heavy one when it came hard on the heels of
+            // another -- played over all of him but his arms, which keep the rifle. A limb also takes a small kick of its own.
+            int now = _sim.TickCount;
+            bool heavy = _modernLastHitTick.TryGetValue(member, out int last) && now - last <= HeavyHitTicks;
+            _modernLastHitTick[member] = now;
+            if (asset.Hit(ahead, right, zone, heavy) is { } hit)
+            {
+                body.Flinch(hit);
+            }
+
+            if (zone < 12)
+            {
+                body.Kick(zone, ahead, right, strength: 0.5f);
+            }
+        }
+    }
+
     private void TickForcedPose(SoldierMember member, ModernBody body, ModernBodyAsset asset, string forced)
     {
         bool fresh = _modernForcedSeen.GetValueOrDefault(member) != forced;
@@ -306,7 +331,7 @@ public sealed partial class SoldierRenderer
             _ => default,
         };
         aiming |= forced == "aim_up";
-        body.Tick(moved, yaw, 0f, aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look);
+        body.Tick(moved, yaw, Raise(member, member.Agent.View), aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look);
     }
 
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.

@@ -153,6 +153,11 @@ public sealed partial class Igi1HumanAi
         // 0x48E920 sets the gait from the cursor's flag before it looks at the command, so a RunTo changes it from
         // the tick after: the flag is the one the last movement command left, or a new cursor's walk.
         SetGait(route.IsWalking);
+        if (GameplayCVars.ForceKneel.Value >= 0 && GameplayCVars.ForceKneel.Value == GuardId)
+        {
+            WriteChannel(AiCombatChannel.Kneel, 1f);
+        }
+
         if (route.Current is not { } command)
         {
             Activity = AiSoldierActivity.Idle;
@@ -164,6 +169,11 @@ public sealed partial class Igi1HumanAi
         if (route.IsCrouching)
         {
             WriteChannel(AiCombatChannel.Kneel, 1f);
+        }
+
+        if (HoldPatrolStop(tick))
+        {
+            return;
         }
 
         bool finished = route.Begin(tick);
@@ -198,6 +208,7 @@ public sealed partial class Igi1HumanAi
             case AiPatrolCommandKind.RunTo:
                 RequestedAnimation = -1;
                 finished = StepTowardsNode(command.Operand);
+                _patrolWalkedTicks++;
                 break;
 
             case AiPatrolCommandKind.LookAtNode:
@@ -226,6 +237,7 @@ public sealed partial class Igi1HumanAi
         if (finished)
         {
             _animationFinished = false;
+            MayStopOnPatrol(tick, route, command);
             route.Advance();
         }
     }

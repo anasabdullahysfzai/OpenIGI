@@ -452,6 +452,80 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         return vertices;
     }
 
+    /// <summary>
+    /// A round meets the body where it is drawn: standing, a round at head height takes the head and one at the shins a leg; knelt,
+    /// the round at the standing head's height passes over him and his head is met lower down. The rifle lets rounds through.
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void ARoundMeetsTheBodyWhereItIsDrawn()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        Assert.Contains(-1, asset.TriangleParts); // the rifle's
+
+        // From in front of him -- he faces +Y -- straight back through him, at a height above his lowest point, on his middle.
+        (int Part, float Height)[] Profile(bool kneeling, float side = 0f)
+        {
+            using ModernBody body = new(asset, device);
+            for (int tick = 0; tick < 45; tick++)
+            {
+                body.Tick(0f, 0f, aiming: true, kneeling: kneeling);
+            }
+
+            List<(int, float)> met = [];
+            for (float z = 0.05f; z < 2.2f; z += 0.05f)
+            {
+                met.Add((body.TryMeet(new Vector3(side, 3f, z), new Vector3(side, -3f, z), out _, out int part, out _) ? part : -1, z));
+            }
+
+            output.WriteLine($"{(kneeling ? "knelt" : "standing")}: " + string.Join(" ", met.Select(m => $"{m.Item2:0.00}:{m.Item1}")));
+            return [.. met];
+        }
+
+        static bool Head(int part) => part is 4 or 5;
+        static bool Leg(int part) => part >= 20;
+
+        (int Part, float Height)[] standing = Profile(kneeling: false), knelt = Profile(kneeling: true);
+        float standingHead = standing.Where(m => Head(m.Part)).Max(m => m.Height);
+        Assert.InRange(standingHead, 1.5f, 1.95f);
+        Assert.Contains(Profile(kneeling: false, side: 0.12f), m => Leg(m.Part) && m.Height < 0.6f); // between his legs, nothing
+        Assert.DoesNotContain(standing, m => m.Height > 1.95f && m.Part >= 0);
+
+        Assert.DoesNotContain(knelt, m => m.Height >= standingHead - 0.05f && m.Part >= 0);
+        Assert.Contains(knelt, m => Head(m.Part) && m.Height < standingHead - 0.3f);
+    }
+
+    /// <summary>
+    /// A stop's clip outlasts the tick he arrives on, when he has still moved; his rifle coming up ends it, and so does setting off.
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void AStopsClipEndsWhenHisRifleComesUpOrHeSetsOff()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        Assert.Equal(2, asset.StopClips.Count);
+        using ModernBody body = new(asset, device);
+        body.Tick(0f, 0f);
+
+        body.Gesture(asset.StopClips[0]);
+        body.Tick(1.2f / 30f, 0f); // the tick he arrives
+        Assert.Contains("stop_", body.Showing, StringComparison.Ordinal);
+        body.Tick(0f, 0f);
+        Assert.Contains("stop_", body.Showing, StringComparison.Ordinal);
+        body.Tick(0f, 0f, aiming: true);
+        Assert.DoesNotContain("stop_", body.Showing, StringComparison.Ordinal);
+
+        body.Gesture(asset.StopClips[1]);
+        for (int tick = 0; tick < 20; tick++)
+        {
+            body.Tick(0f, 0f);
+        }
+
+        Assert.Contains("stop_", body.Showing, StringComparison.Ordinal);
+        body.Tick(1.2f / 30f, 0f);
+        Assert.DoesNotContain("stop_", body.Showing, StringComparison.Ordinal);
+    }
+
     // A joint's place in the soldier's frame.
     private static Vector3 Joint(ModernBodyAsset asset, string name, float walkTime, float walkWeight)
     {

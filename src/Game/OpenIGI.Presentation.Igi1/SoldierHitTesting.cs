@@ -180,6 +180,12 @@ internal sealed class SoldierHitTesting(
             ? new Vector3d(ray.X / reach, ray.Y / reach, ray.Z / reach)
             : default;
 
+        // A modern body (g_modern_bodies) is met where it is drawn: its own triangles, not the hidden original's.
+        if (member.Modern is { Fallen: false } modern && member.HasFrameState && !_sim.Rewound)
+        {
+            return TryCastModern(modern, member, origin, rayEnd, out candidate);
+        }
+
         // The player fires against the body the crosshair was drawn over. With r_smooth that is
         // the last presentation transform, not the newer simulation state the next tick has just
         // published. AI fire stays on its own fixed-tick path below: this is only the player-shot
@@ -271,5 +277,54 @@ internal sealed class SoldierHitTesting(
         }
 
         return met;
+    }
+
+    // A round at a modern body, in the frame it was last drawn in, scored by the original's rules: the struck part's zone, the
+    // trunk refined by which way the round came in, and a front hit within 15 cm of the origin promoted (as TryCastMesh does).
+    private static bool TryCastModern(ModernBody modern, SoldierMember member, Vector3d origin, Vector3d rayEnd, out HumanHit hit)
+    {
+        hit = default;
+        Vector3d root = member.DrawnWhere * WorldScene.UnitsPerMetre;
+        Matrix3f m = member.DrawnOrientation;
+        Vector3d ray = rayEnd - origin;
+        double reach = ray.Length;
+
+        // A round nowhere near him never meets his triangles (the body sphere TryCastMember's mesh cast uses, about his middle).
+        double r = SoldierSimulation.PickCullRadiusUnits;
+        if (reach <= 0.0 || (Vector3d.Distance(origin, root) > r
+            && !SoldierSimulation.RaySphere(origin, ray * (1.0 / reach), root, r, reach, out _)))
+        {
+            return false;
+        }
+
+        // Into the body's own frame, metres: the drawn turn undone (its transpose) about the drawn origin.
+        System.Numerics.Vector3 Local(Vector3d p)
+        {
+            double x = (p.X - root.X) / WorldScene.UnitsPerMetre, y = (p.Y - root.Y) / WorldScene.UnitsPerMetre, z = (p.Z - root.Z) / WorldScene.UnitsPerMetre;
+            return new((float)((m.M11 * x) + (m.M21 * y) + (m.M31 * z)), (float)((m.M12 * x) + (m.M22 * y) + (m.M32 * z)),
+                (float)((m.M13 * x) + (m.M23 * y) + (m.M33 * z)));
+        }
+
+        if (!modern.TryMeet(Local(origin), Local(rayEnd), out float along, out int part, out System.Numerics.Vector3 n))
+        {
+            return false;
+        }
+
+        Vector3d contact = origin + (ray * along);
+        Vector3f incoming = new Vector3f((float)-ray.X, (float)-ray.Y, (float)-ray.Z).NormalizedOr(Vector3f.UnitY);
+        Vector3f forward = new Vector3f(m.M12, m.M22, m.M32).NormalizedOr(Vector3f.UnitY);
+        float localForward = (incoming.X * forward.X) + (incoming.Y * forward.Y);
+        float localSide = (incoming.X * -forward.Y) + (incoming.Y * forward.X);
+        int zone = HumanDamage.RefineByDirection(HumanDamage.ZoneOfBodyPart(part), localForward, localSide);
+        if (HumanDamage.TakesProximityZone((float)Vector3d.Distance(contact, root), localForward))
+        {
+            zone = HumanDamage.ProximityZone;
+        }
+
+        Vector3f normal = new(
+            (m.M11 * n.X) + (m.M12 * n.Y) + (m.M13 * n.Z), (m.M21 * n.X) + (m.M22 * n.Y) + (m.M23 * n.Z), (m.M31 * n.X) + (m.M32 * n.Y) + (m.M33 * n.Z));
+        int bone = part < HumanDamage.WeaponChainFirstBone ? part : part + HumanDamage.WeaponChainBoneCount;
+        hit = new HumanHit(contact, along * reach, zone, localForward, localSide, bone, Normal: normal);
+        return true;
     }
 }
