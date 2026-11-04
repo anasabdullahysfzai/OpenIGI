@@ -28,6 +28,7 @@ public sealed partial class SoldierRenderer
     private readonly Dictionary<SoldierMember, double> _modernStandingHeights = [];
     private readonly Dictionary<SoldierMember, float> _modernRootTops = [];
     private readonly Dictionary<SoldierMember, int> _modernStopsSeen = [];
+    private readonly Dictionary<SoldierMember, (int, int)> _modernSearchSeen = [];
     private readonly Dictionary<SoldierMember, int> _modernHitsSeen = [];
     private readonly Dictionary<SoldierMember, int> _modernLastHitTick = [];
     private readonly Dictionary<SoldierMember, (float Facing, bool Reloading, bool Throwing)> _modernLast = [];
@@ -157,10 +158,28 @@ public sealed partial class SoldierRenderer
         }
 
         // Called away from his patrol, he leaves whatever he was doing at a stop.
-        if (fighter is { OnPatrol: false })
+        if (fighter is { OnPatrol: false, HoldsGesture: false })
         {
             body.EndGesture();
         }
+
+        // Checking a body, or waving the squad on.
+        if (fighter is not null)
+        {
+            (int checks, int signals) seen = _modernSearchSeen.GetValueOrDefault(member);
+            if (fighter.SearchGestures.Checks != seen.checks)
+            {
+                body.Gesture(asset.BodyCheck);
+            }
+            else if (fighter.SearchGestures.Signals != seen.signals)
+            {
+                body.Gesture(asset.HandSignal);
+            }
+
+            _modernSearchSeen[member] = fighter.SearchGestures;
+        }
+
+        bool ready = fighter is { RifleReady: true } && !aiming;
 
         // A stop on his patrol: something to do with it, where the character has clips for one.
         if (fighter is not null && fighter.PatrolStops != _modernStopsSeen.GetValueOrDefault(member))
@@ -172,8 +191,8 @@ public sealed partial class SoldierRenderer
             }
         }
 
-        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming, member.Agent.ShotSequence, kneeling, keepsDown, turning,
-            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look);
+        body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming || ready, member.Agent.ShotSequence, kneeling, keepsDown, turning,
+            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false);
         if (GameplayCVars.BodyLog.Value >= 0 && GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(

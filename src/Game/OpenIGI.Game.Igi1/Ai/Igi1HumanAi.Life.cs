@@ -462,6 +462,11 @@ public sealed partial class Igi1HumanAi
         {
             if (friend.Slot.IsVisible && !friend.Candidate.Alive)
             {
+                if (GameplayCVars.ModernAi.Value)
+                {
+                    NoticeFallenFriend(friend);
+                }
+
                 PostDetection(AiEvent.FriendlyDetection, friend);
             }
         }

@@ -92,7 +92,7 @@ public sealed partial class Igi1HumanAi
     // At the end of a leg of a walk he may stop, unless the script stops him there itself or has him hurry.
     private void MayStopOnPatrol(int tick, AiPatrolRoute route, AiPatrolCommand finished)
     {
-        if (!GameplayCVars.ModernAi.Value || finished.Kind != AiPatrolCommandKind.WalkTo || !route.IsWalking
+        if (!GameplayCVars.ModernAi.Value || IsOnEdge || finished.Kind != AiPatrolCommandKind.WalkTo || !route.IsWalking
             || route.Next is not { Kind: AiPatrolCommandKind.WalkTo } || _patrolWalkedTicks < PatrolStopWalkTicks
             || _random.NextDouble() >= PatrolStopChance)
         {

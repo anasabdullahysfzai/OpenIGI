@@ -179,6 +179,12 @@ public sealed partial class Igi1HumanAi
 
     private bool FightModernTick(int tick, Vector3d enemy)
     {
+        // A grenade he asked for is the original's to throw (the patrol arm's one-shot); one that never went is let go.
+        if (_grenadeAsked >= 0 && tick - _grenadeAsked > 60 && _patrolOneShotChild == AiPatrolAction.ThrowGrenade)
+        {
+            _patrolOneShotChild = null;
+        }
+
         if (_patrolProne || _patrolOneShotChild is not null || _patrolRollChild is not null)
         {
             return false;
@@ -197,23 +203,24 @@ public sealed partial class Igi1HumanAi
             (_lastKnown, _lastSeenTick) = (shared.Position, shared.Tick);
         }
 
+        // A fight over a sound, nobody having seen him: he gives up in time, counted from now, at where he thinks it came from.
+        if (_lastSeenTick == 0)
+        {
+            (_lastKnown, _lastSeenTick) = (feet, tick);
+        }
+
         Vector3d target = _lastKnown ?? feet;
         int rounds = Events.DrainedCount(AiEvent.TakingDamage) + Events.DrainedCount(AiEvent.GunshotMiss);
         bool underFire = rounds > 0;
         _suppression = Math.Min(SuppressionMost,
             Math.Max(0.0, _suppression - (SuppressionFadePerSecond / AiCombatParameters.TicksPerSecond)) + (rounds * SuppressionPerRound));
 
-        // A grenade he asked for is the original's to throw (the patrol arm's one-shot); one that never went is let go.
-        if (_grenadeAsked >= 0 && tick - _grenadeAsked > 60 && _patrolOneShotChild == AiPatrolAction.ThrowGrenade)
+        // Nobody has seen him for a long while: the fight ends, and the hunt for him follows it (Igi1HumanAi.Search).
+        if (tick - _lastSeenTick > GiveUpTicks)
         {
-            _patrolOneShotChild = null;
-        }
-
-        // Nobody has seen him for a long while: the fight is left to end as the original's does, and the search to follow it.
-        if (tick - _lastSeenTick > GiveUpTicks && _lastSeenTick > 0)
-        {
-            ForgetTactics();
-            return false;
+            _huntPlace = _lastKnown;
+            EndCombat();
+            return true;
         }
 
         _squad?.Fight(this, _fireNode >= 0 ? _graph!.NodeAt(_fireNode)!.Position : Position, tick);

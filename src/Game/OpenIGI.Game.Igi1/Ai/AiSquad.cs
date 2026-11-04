@@ -28,6 +28,40 @@ public sealed class AiSquad
     public bool OtherFlanking(Igi1HumanAi soldier, int tick) =>
         _flanker is { } flanker && flanker != soldier && tick - _members.GetValueOrDefault(flanker).Tick <= StaleTicks;
 
+    private readonly Dictionary<int, int> _searchedNodes = [];
+    private readonly HashSet<int> _bodies = [];
+
+    /// <summary>Gets a place the squad was told to search, and when; null before anyone has been.</summary>
+    public (Vector3d Place, int Tick)? SearchCall { get; private set; }
+
+    /// <summary>Tells the squad to search a place: a body found, say.</summary>
+    /// <param name="place">The place.</param>
+    /// <param name="tick">The tick.</param>
+    public void CallSearch(Vector3d place, int tick) => SearchCall = (place, tick);
+
+    /// <summary>Takes a node for a soldier to search from, so the squad spreads out: false if another took it within the last half minute.</summary>
+    /// <param name="node">The node.</param>
+    /// <param name="tick">The tick.</param>
+    /// <returns>Whether it is his.</returns>
+    public bool TakeSearchNode(int node, int tick)
+    {
+        if (_searchedNodes.TryGetValue(node, out int taken) && tick - taken < SearchNodeTicks)
+        {
+            return false;
+        }
+
+        _searchedNodes[node] = tick;
+        return true;
+    }
+
+    /// <summary>Notes that a member has noticed a body.</summary>
+    /// <param name="id">Who it is.</param>
+    /// <returns>Whether he is the first to.</returns>
+    public bool NoticeBody(int id) => _bodies.Add(id);
+
+    /// <summary>How long a node stays taken by a soldier searching from it, in ticks.</summary>
+    public const int SearchNodeTicks = 30 * 30;
+
     /// <summary>Gets where the player was last seen by any member, and when; null before anyone has seen him.</summary>
     public (Vector3d Position, int Tick)? LastSeen { get; private set; }
 

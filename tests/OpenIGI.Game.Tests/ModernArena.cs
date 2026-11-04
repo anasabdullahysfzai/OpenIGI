@@ -211,10 +211,27 @@ internal sealed class ModernArena
     /// Ticks a soldier as the game does: his brain against the player, his body stepped by the gait's stride, and his clip
     /// spent as his trigger is pulled and filled when he reloads (the burst counts rounds by watching the clip change).
     /// </summary>
-    public void Tick(Igi1HumanAi soldier, int tick, Vector3d playerFeet)
+    /// <param name="soldier">The soldier.</param>
+    /// <param name="tick">The tick.</param>
+    /// <param name="playerFeet">Where the player stands.</param>
+    /// <param name="bodyFeet">Where a dead team-mate lies, if one is on offer.</param>
+    public void Tick(Igi1HumanAi soldier, int tick, Vector3d playerFeet, Vector3d? bodyFeet = null)
     {
         double stride = soldier.WalksForward ? (soldier.Activity == AiSoldierActivity.Engaging ? 0.11 : 0.04) * Metre : 0.0;
-        soldier.Tick(tick, playerFeet + new Vector3d(0, 0, 1.6 * Metre), rootMotionThisTick: stride, enemyFeet: playerFeet);
+        if (bodyFeet is { } lying)
+        {
+            static Vector3d Mark(Vector3d feet) => feet + new Vector3d(0, 0, Igi1HumanAi.DetectionMarkAboveFeet(false));
+            soldier.TickAmong(
+                tick,
+                [new AiDetectionCandidate(AiDetectionCandidate.PlayerId, true, true, Mark(playerFeet), playerFeet, false, null),
+                 new AiDetectionCandidate(99, false, false, Mark(lying), lying, false, null)],
+                stride);
+        }
+        else
+        {
+            soldier.Tick(tick, playerFeet + new Vector3d(0, 0, 1.6 * Metre), rootMotionThisTick: stride, enemyFeet: playerFeet);
+        }
+
         soldier.StepBodyAfterClip(stride, 0.0);
         int[] clip = _clips[soldier];
         if (soldier.Combat.PullTrigger && clip[0] > 0)

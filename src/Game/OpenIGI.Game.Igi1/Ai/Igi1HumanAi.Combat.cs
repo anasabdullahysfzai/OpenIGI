@@ -394,6 +394,12 @@ public sealed partial class Igi1HumanAi
     /// </remarks>
     private void EndCombat()
     {
+        // The modern AI: he does not calm down the moment it is over.
+        if (GameplayCVars.ModernAi.Value && _combatInstalled)
+        {
+            _onEdgeUntilTick = _lastTick + OnEdgeTicks;
+        }
+
         _combatInstalled = false;
         _combat?.Cancel();
         _gunnerCombat?.End();
