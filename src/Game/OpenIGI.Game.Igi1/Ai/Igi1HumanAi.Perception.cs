@@ -863,6 +863,14 @@ public sealed partial class Igi1HumanAi
         }
     }
 
+    // Whether a man is so close, with nothing between them, that he senses him outside his cone.
+    private bool SensesClose(Igi1AiTrackedHuman human)
+    {
+        Vector3d eye = EyePosition(), mark = human.Candidate.Mark;
+        return Vector3d.Distance(eye, mark) < AiSuspicion.CloseMetres * AiCombatParameters.UnitsPerMetre
+            && (_sight is null || _sight(eye, mark, human.Candidate.Id));
+    }
+
     /// <summary>
     /// The modern AI's gate: the sweep's verdict fills or drains the soldier's suspicion, and the soldier believes it sees the
     /// human only once that is full -- so everything downstream that reads the visible flag waits on it too.
@@ -887,12 +895,14 @@ public sealed partial class Igi1HumanAi
         bool investigating = IsInvestigating || IsSearching;
         bool shotAt = human.Candidate.IsPlayer && _lastTick < _shotAtUntilTick;
         bool lookingForSomeone = IsSearching || IsOnEdge || shotAt || (IsInvestigating && _hunting);
-        if (human.SeesRaw || !investigating)
+        // Right beside him he senses a man wherever he looks, slowly enough that a quick approach from behind still gets there.
+        bool senses = !human.SeesRaw && human.Candidate.IsPlayer && SensesClose(human);
+        if (human.SeesRaw || senses || !investigating)
         {
             human.Suspicion = AiSuspicion.Step(
                 human.Suspicion,
-                human.SeesRaw,
-                snapshot.ViewStrength(human.Candidate.Mark),
+                human.SeesRaw || senses,
+                senses ? AiSuspicion.CloseViewStrength : snapshot.ViewStrength(human.Candidate.Mark),
                 human.Candidate.Crouching,
                 metresPerSecond,
                 Alerted || lookingForSomeone,
@@ -905,6 +915,7 @@ public sealed partial class Igi1HumanAi
             human.Suspicion = 1.0;
         }
 
+        human.SeesRaw |= senses && human.Suspicion >= 1.0;
         human.Slot.IsVisible = human.SeesRaw && human.Suspicion >= 1.0;
         if (human.Slot.IsVisible && !wasSure && human.Candidate.IsPlayer)
         {
@@ -982,7 +993,7 @@ public sealed partial class Igi1HumanAi
     public Vector3d EyePosition() => _eyePosition?.Invoke()
         ?? new Vector3d(Position.X, Position.Y, Position.Z + HumanSeparationEyeHeight);
 
-    private Matrix3f EyeOrientation() => _eyeOrientation?.Invoke() ?? Orientation;
+    private Matrix3f EyeOrientation() => TurnedByGaze(_eyeOrientation?.Invoke() ?? Orientation);
 
     /// <summary>Diagnostics: the eye matrix a sweep run now would test against -- the bound eye, or the body's.</summary>
     public Matrix3f CurrentEyeOrientation => EyeOrientation();

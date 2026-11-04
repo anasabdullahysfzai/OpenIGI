@@ -156,6 +156,12 @@ public sealed partial class SoldierRenderer
             look = new Vector3(MathF.Sin(glance), MathF.Cos(glance), 0f);
         }
 
+        // Called away from his patrol, he leaves whatever he was doing at a stop.
+        if (fighter is { OnPatrol: false })
+        {
+            body.EndGesture();
+        }
+
         // A stop on his patrol: something to do with it, where the character has clips for one.
         if (fighter is not null && fighter.PatrolStops != _modernStopsSeen.GetValueOrDefault(member))
         {

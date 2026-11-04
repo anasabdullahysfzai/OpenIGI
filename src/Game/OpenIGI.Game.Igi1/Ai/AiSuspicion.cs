@@ -31,6 +31,12 @@ public static class AiSuspicion
     /// <summary>The least share for an alerted soldier, who is looking for someone: far off, he still makes him out in seconds.</summary>
     public const double AlertedFloorViewStrength = 0.3;
 
+    /// <summary>How near, in metres, a soldier senses a human outside his cone, with nothing between them.</summary>
+    public const double CloseMetres = 2.0;
+
+    /// <summary>The share of the fill sensing a human so close gives: about three seconds at a walk, eight crouched and still.</summary>
+    public const double CloseViewStrength = 0.3;
+
     /// <summary>What crouching multiplies the fill by.</summary>
     public const double Crouched = 0.6;
 

@@ -535,6 +535,17 @@ internal sealed class ModernBody : IDisposable
     private float _ankleLowest = float.NaN;
 
     /// <summary>Gets an ankle's place in the body's glTF frame as last posed, for testing.</summary>
+    internal float HeadYawForTesting
+    {
+        get
+        {
+            int head = _asset.Torso.Head;
+            int joint = Array.FindIndex(_asset.Joints, j => j.Node == head);
+            Vector3 f = Vector3.TransformNormal(Vector3.UnitZ, _skin[joint]);
+            return MathF.Atan2(-f.X, f.Z);
+        }
+    }
+
     internal Vector3 AnkleForTesting(int foot) => _world[_asset.Legs[foot].Ankle].Translation;
 
     /// <summary>Gets how far each foot is held to the ground now, left then right, nought to one, for testing.</summary>
@@ -799,6 +810,15 @@ internal sealed class ModernBody : IDisposable
     /// <summary>Plays a patrol stop's clip once over what he stands in: unlike <see cref="Act"/>, his rifle coming up ends it.</summary>
     /// <param name="clip">The clip.</param>
     public void Gesture(ModernClip clip) => (_act, _actTime, _gesture) = (clip, 0f, true);
+
+    /// <summary>Ends a patrol stop's clip, if one is playing.</summary>
+    public void EndGesture()
+    {
+        if (_gesture)
+        {
+            (_act, _gesture) = (null, false);
+        }
+    }
 
     /// <summary>How long a gesture's first moments ignore his moving, in seconds.</summary>
     public const float GestureGraceSeconds = 0.5f;

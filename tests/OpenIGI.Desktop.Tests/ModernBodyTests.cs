@@ -526,6 +526,26 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.DoesNotContain("stop_", body.Showing, StringComparison.Ordinal);
     }
 
+    /// <summary>The sweep the AI's sight follows is the one the looking-around clip's head makes.</summary>
+    [RequiresModernBodyFact]
+    public void TheLookingAroundClipTurnsHisHeadBothWays()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        body.Tick(0f, 0f);
+        body.Gesture(asset.StopClips[0]);
+        float most = 0f, least = 0f;
+        for (int tick = 0; tick < Game.Igi1.Ai.Igi1HumanAi.LookAroundTicks; tick++)
+        {
+            body.Tick(0f, 0f);
+            (most, least) = (Math.Max(most, body.HeadYawForTesting), Math.Min(least, body.HeadYawForTesting));
+        }
+
+        Assert.InRange(most * 180f / MathF.PI, 100f, 130f);
+        Assert.InRange(least * 180f / MathF.PI, -150f, -120f);
+    }
+
     // A joint's place in the soldier's frame.
     private static Vector3 Joint(ModernBodyAsset asset, string name, float walkTime, float walkWeight)
     {
