@@ -339,6 +339,18 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <inheritdoc cref="CrouchWalk"/>
     public ModernClip WalkBack { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets the cautious walk with the rifle up while hunting for someone (<c>search_walk</c>).</summary>
+    public ModernClip SearchWalk { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the look about from a kneel, rifle up (<c>kneel_scan</c>).</summary>
+    public ModernClip KneelScan { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets kneeling to check a body and standing again, played once (<c>body_check</c>).</summary>
+    public ModernClip BodyCheck { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the left hand waving forward, played once (<c>hand_signal</c>).</summary>
+    public ModernClip HandSignal { get; private set; } = ModernClip.None;
+
     /// <summary>Gets the reload, standing and kneeling, and the grenade toss, played once (<c>reload</c>, <c>kneel_reload</c>,
     /// <c>throw</c>; <see cref="ModernClip.None"/> where the file has none).</summary>
     public ModernClip Reload { get; private set; } = ModernClip.None;
@@ -355,6 +367,12 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the falls, by shot from behind then headshot, each null where the file has none.</summary>
     /// <remarks>Named <c>death_front</c>, <c>death_back</c>, <c>death_front_head</c> and <c>death_back_head</c>; played once and held.</remarks>
     public ModernClip?[,] Deaths { get; private set; } = new ModernClip?[2, 2];
+
+    /// <summary>Gets the falls from a kneel, shot from the front and from behind; each null where the character has none.</summary>
+    public ModernClip?[] KneelDeaths { get; private set; } = new ModernClip?[2];
+
+    /// <summary>Gets the fall from a kneel for a shot in the head, whichever way it came; null where the character has none.</summary>
+    public ModernClip? KneelHeadDeath { get; private set; }
 
     /// <summary>Gets the flinches, each null where the file has none: <c>hit_front</c>, <c>hit_back</c>, <c>hit_left</c>, <c>hit_right</c>.</summary>
     public (ModernClip? Front, ModernClip? Back, ModernClip? Left, ModernClip? Right) Hits { get; private set; }
@@ -438,10 +456,12 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="fromBehind">Whether the round came from behind.</param>
     /// <param name="headshot">Whether it struck the head or neck.</param>
     /// <returns>The fall, or null where the file has none.</returns>
-    public ModernClip? Death(bool fromBehind, bool headshot)
+    /// <param name="kneeling">Whether he was kneeling: a fall that starts from a kneel, where the character has one.</param>
+    public ModernClip? Death(bool fromBehind, bool headshot, bool kneeling = false)
     {
         int side = fromBehind ? 1 : 0, head = headshot ? 1 : 0;
-        return Deaths[side, head] ?? Deaths[side, 0] ?? Deaths[1 - side, 0];
+        ModernClip? fromKneel = !kneeling ? null : (headshot ? KneelHeadDeath : null) ?? KneelDeaths[side];
+        return fromKneel ?? Deaths[side, head] ?? Deaths[side, 0] ?? Deaths[1 - side, 0];
     }
 
     /// <summary>Reads a character, uploading its textures.</summary>
@@ -507,7 +527,11 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.StrafeLeft = Optional("strafe_left", travelling: true, asset.AimWalk);
         asset.StrafeRight = Optional("strafe_right", travelling: true, asset.AimWalk);
         asset.WalkBack = Optional("walk_back", travelling: true, asset.AimWalk);
-        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run, asset.CrouchWalk, asset.StrafeLeft, asset.StrafeRight, asset.WalkBack }.Distinct())
+        asset.SearchWalk = Optional("search_walk", travelling: true, asset.AimWalk);
+        asset.KneelScan = Optional("kneel_scan", travelling: false, asset.KneelAim);
+        asset.BodyCheck = Optional("body_check", travelling: false, ModernClip.None);
+        asset.HandSignal = Optional("hand_signal", travelling: false, ModernClip.None);
+        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run, asset.CrouchWalk, asset.StrafeLeft, asset.StrafeRight, asset.WalkBack, asset.SearchWalk }.Distinct())
         {
             moving.MetresPerSecond = ModernBody.WalkSpeed(asset, moving);
         }
@@ -523,6 +547,13 @@ internal sealed class ModernBodyAsset : IDisposable
                 asset.Deaths[side, head] = ModernClip.ReadFall(fall, index, asset.Rest.Length, up);
             }
         }
+
+        ModernClip? Fall(string name) =>
+            model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
+                ? ModernClip.ReadFall(clip, index, asset.Rest.Length, up)
+                : null;
+        asset.KneelDeaths = [Fall("death_kneel_front"), Fall("death_kneel_back")];
+        asset.KneelHeadDeath = Fall("death_kneel_head");
 
         ModernClip? Flinch(string name) =>
             model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip

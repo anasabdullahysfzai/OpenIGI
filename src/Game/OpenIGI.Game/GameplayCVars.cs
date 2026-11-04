@@ -454,6 +454,13 @@ public static class GameplayCVars
         CVarOptions.None,
         "Kneels this soldier while he patrols, as a crouch in his path would (testing); -1 for none.");
 
+    /// <summary>Whether soldiers stop thinking until they die: they stand still, deaf and blind, for a test to shoot (testing).</summary>
+    public static readonly BoolCVar FreezeAi = CVar.Bool(
+        "dev_ai_freeze",
+        false,
+        CVarOptions.None,
+        "Soldiers stop thinking until they die, so a test can shoot them where they stand (testing).");
+
     /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
     /// <remarks>
     /// idle, walk, aim, fire, aim_walk, run; hit_front, hit_back, hit_left, hit_right (once each time it is set); die_front,

@@ -19,7 +19,7 @@ public sealed partial class GameHost
     // The animation viewer's list (dev_pose_next): every clip of a modern body, at ease, in a fight, struck and falling.
     private static readonly string[] ViewerPoses =
     [
-        "idle", "walk", "aim", "fire", "aim_walk", "run", "kneel", "kneel_aim", "turn_left", "turn_right", "turn_fast_left", "turn_fast_right", "reload", "throw", "crouch_walk", "strafe_left", "strafe_right", "walk_back", "aim_up", "look_right",
+        "idle", "walk", "aim", "fire", "aim_walk", "run", "kneel", "kneel_aim", "turn_left", "turn_right", "turn_fast_left", "turn_fast_right", "reload", "throw", "body_check", "hand_signal", "search_walk", "kneel_scan", "crouch_walk", "strafe_left", "strafe_right", "walk_back", "aim_up", "look_right",
         "react_15_front", "react_15_back", "react_13_front", "react_13_front_heavy", "react_14_back", "react_14_back_heavy",
         "react_13_left", "react_13_left_heavy", "react_13_right", "react_13_right_heavy",
         "react_5_front", "react_11_front", "react_2_front", "react_8_front",

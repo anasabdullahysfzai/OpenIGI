@@ -266,6 +266,8 @@ internal sealed class ModernBody : IDisposable
     /// <param name="raise">How far to raise the body, in metres: what the soldier's own clip has lowered where he is drawn.</param>
     /// <param name="aiming">Whether he is in a fight, with his rifle up.</param>
     /// <param name="shots">How many shots he has fired, which a firing clip follows.</param>
+    /// <param name="searching">Whether he walks hunting for someone: the cautious walk.</param>
+    /// <param name="scanning">Whether, kneeling, he looks about him, rifle up.</param>
     /// <param name="kneeling">Whether he kneels: down out of sight, or with his rifle up when he is also aiming.</param>
     /// <param name="keepsDown">Whether he kneels to hide, his rifle lowered whatever the fight.</param>
     /// <param name="turning">How fast he turns about up, in radians a second, left positive.</param>
@@ -275,7 +277,7 @@ internal sealed class ModernBody : IDisposable
     /// <param name="look">Where he looks, in the soldier's frame (x right, y ahead, z up), from his eyes; zero for nowhere in
     /// particular. Aiming, his upper body bends to it; always, his head turns to it.</param>
     public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0, bool kneeling = false, bool keepsDown = false, float turning = 0f,
-        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default)
+        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default, bool searching = false, bool scanning = false)
     {
         if (_fall is { } fall)
         {
@@ -304,6 +306,7 @@ internal sealed class ModernBody : IDisposable
             return;
         }
 
+        Kneeling = kneeling;
         Speed = moved / TickSeconds;
         bool moving = Speed >= StandingBelow;
         // His legs come in as fast as he does: the soldier is at full speed the tick he sets off, and a quarter second of
@@ -320,7 +323,8 @@ internal sealed class ModernBody : IDisposable
 
         _firingFor = Math.Max(0f, _firingFor - TickSeconds);
         _running = moving && (_running ? Speed > RunBelow : Speed > RunAbove);
-        ModernClip stand = kneeling ? (!keepsDown && (aiming || _firingFor > 0f) ? _asset.KneelAim : _asset.KneelIdle)
+        ModernClip stand = kneeling && scanning && _firingFor <= 0f ? _asset.KneelScan
+            : kneeling ? (!keepsDown && (aiming || _firingFor > 0f) ? _asset.KneelAim : _asset.KneelIdle)
             : _firingFor > 0f ? _asset.Fire : aiming ? _asset.AimIdle : _asset.Idle;
 
         // A reload or a throw over whatever he stands in, played once; set off moving, he leaves it.
@@ -372,7 +376,8 @@ internal sealed class ModernBody : IDisposable
         _turnWeight = Math.Clamp(_turnWeight + ((_turnFor > 0f ? 1f : -1f) * TickSeconds / TurnBlendSeconds), 0f, 1f);
 
         // Crouched, his crouched walk; facing elsewhere than he goes, the clip for the way he goes against his facing.
-        ModernClip move = crouched ? _asset.CrouchWalk
+        ModernClip move = searching ? _asset.SearchWalk
+            : crouched ? _asset.CrouchWalk
             : heading != Vector2.Zero ? (Math.Abs(heading.X) >= Math.Abs(heading.Y)
                 ? (heading.X >= 0f ? _asset.AimWalk : _asset.WalkBack)
                 : (heading.Y > 0f ? _asset.StrafeRight : _asset.StrafeLeft))
@@ -535,6 +540,8 @@ internal sealed class ModernBody : IDisposable
     private float _ankleLowest = float.NaN;
 
     /// <summary>Gets an ankle's place in the body's glTF frame as last posed, for testing.</summary>
+    internal float HeadHeightForTesting => _world[_asset.Torso.Head].Translation.Y;
+
     internal float HeadYawForTesting
     {
         get
@@ -680,6 +687,9 @@ internal sealed class ModernBody : IDisposable
 
     /// <summary>The second half of <see cref="DrawAt"/>: the skinned mesh to the device, on the thread that owns it.</summary>
     public void Upload() => _device.UpdateAnimatedMesh(Mesh, _vertices);
+
+    /// <summary>Gets a value indicating whether he was kneeling when last posed alive.</summary>
+    public bool Kneeling { get; private set; }
 
     /// <summary>Gets what the body last showed, for the body log (<c>dev_body_log</c>).</summary>
     public string Showing { get; private set; } = string.Empty;

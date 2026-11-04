@@ -248,13 +248,18 @@ public sealed partial class SoldierSimulation : IHumanEvents
         // mission 4: level-start patrols dispatched CREATE on counter 0, and the squad's casts ran one tick later,
         // by count, than the port's had.
         brain.HumanDead = _context.HealthOf(view).IsDead;
-        brain.TickAmong(
-            TickCount - 1,
-            _sight.CandidatesFor(view, brain, feet, playerMark, enemyAlive, enemyCrouching),
-            travel,
-            alarmOn,
-            alarmWasOn,
-            lateral);
+        // dev_ai_freeze: he thinks nothing until he is dead, which he still handles.
+        if (!GameplayCVars.FreezeAi.Value || brain.HumanDead)
+        {
+            brain.TickAmong(
+                TickCount - 1,
+                _sight.CandidatesFor(view, brain, feet, playerMark, enemyAlive, enemyCrouching),
+                travel,
+                alarmOn,
+                alarmWasOn,
+                lateral);
+        }
+
         Vector3d aimFeet = brain.TargetFeet;
         bool aimCrouching = brain.TargetCrouching;
 

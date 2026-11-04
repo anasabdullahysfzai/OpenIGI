@@ -546,6 +546,62 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         Assert.InRange(least * 180f / MathF.PI, -150f, -120f);
     }
 
+    /// <summary>
+    /// Killed kneeling he falls from his kneel, not from his feet: each way of being shot has its own fall, starting with his head
+    /// no higher than a kneeling man's, and ending lying down.
+    /// </summary>
+    [RequiresModernBodyFact]
+    public void KilledKneelingHeFallsFromHisKneel()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        foreach ((bool behind, bool head) in new[] { (false, false), (true, false), (false, true), (true, true) })
+        {
+            ModernClip fall = asset.Death(behind, head, kneeling: true)!;
+            Assert.NotSame(asset.Death(behind, head), fall);
+
+            using ModernBody body = new(asset, device);
+            for (int tick = 0; tick < 45; tick++)
+            {
+                body.Tick(0f, 0f, aiming: true, kneeling: true);
+            }
+
+            Assert.True(body.Kneeling);
+            body.Fall(fall);
+            float tallest = 0f, last = 0f;
+            for (int tick = 0; tick < (fall.Duration * 30) + 10; tick++)
+            {
+                body.Tick(0f, 0f);
+                last = body.HeadHeightForTesting;
+                tallest = Math.Max(tallest, last);
+            }
+
+            output.WriteLine($"behind {behind}, head {head}: {fall.Duration:0.00} s, tallest {tallest:0.00} m, ends {last:0.00} m");
+            Assert.InRange(fall.Duration, 2.5f, 4.5f); // the held kneel is cut
+            Assert.True(tallest < 1.35f, $"he stood up first: {tallest:0.00} m");
+            Assert.True(last < 0.6f, $"he did not end lying down: {last:0.00} m");
+        }
+    }
+
+    /// <summary>The cautious walk has a pace the game can measure, and his legs step through it.</summary>
+    [RequiresModernBodyFact]
+    public void TheSearchWalkSteps()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        Assert.InRange(asset.SearchWalk.MetresPerSecond, 0.9f, 1.3f);
+        using ModernBody body = new(asset, device);
+        float step = asset.SearchWalk.MetresPerSecond / 30f, most = float.MinValue, least = float.MaxValue;
+        for (int tick = 0; tick < 90; tick++)
+        {
+            body.Tick(step, 0f, aiming: true, travel: new Vector2(step, 0f), searching: true);
+            (most, least) = (Math.Max(most, body.AnkleForTesting(0).Z), Math.Min(least, body.AnkleForTesting(0).Z));
+        }
+
+        Assert.Contains("search_walk", body.Showing, StringComparison.Ordinal);
+        Assert.True(most - least > 0.3f, $"his foot only moved {most - least:0.00} m");
+    }
+
     // A joint's place in the soldier's frame.
     private static Vector3 Joint(ModernBodyAsset asset, string name, float walkTime, float walkWeight)
     {

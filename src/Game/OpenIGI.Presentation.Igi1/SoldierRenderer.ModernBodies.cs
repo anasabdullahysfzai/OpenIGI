@@ -302,6 +302,19 @@ public sealed partial class SoldierRenderer
             "run" => asset.Run.MetresPerSecond * tick,
             _ => 0f,
         };
+        // body_check, hand_signal: once each time it is set; search_walk: walking on the spot.
+        if (fresh && forced is "body_check" or "hand_signal")
+        {
+            body.Gesture(forced == "body_check" ? asset.BodyCheck : asset.HandSignal);
+        }
+
+        if (forced == "search_walk")
+        {
+            float step = asset.SearchWalk.MetresPerSecond * tick;
+            body.Tick(step, yaw, 0f, aiming: true, travel: new Vector2(step, 0f), searching: true);
+            return;
+        }
+
         // reload, throw: played once each time it is set; turn_left, turn_right: a steady turn of 60 degrees a second.
         if (fresh && forced is "reload" or "throw")
         {
@@ -337,13 +350,15 @@ public sealed partial class SoldierRenderer
             _ => default,
         };
         aiming |= forced == "aim_up";
-        body.Tick(moved, yaw, Raise(member, member.Agent.View), aiming, shots, kneeling: forced is "kneel" or "kneel_aim", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look);
+        float forcedRaise = Raise(member, member.Agent.View);
+        _modernStandingHeights[member] = member.TickWhere.Z + forcedRaise; // the height a fall from this pose starts at
+        body.Tick(moved, yaw, forcedRaise, aiming, shots, kneeling: forced is "kneel" or "kneel_aim" or "kneel_scan", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look, scanning: forced == "kneel_scan");
     }
 
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.
     private bool StartFall(SoldierMember member, ModernBodyAsset asset, SoldierView view)
     {
-        if (member.Modern is not { } body || asset.Death(view.KillShot.FromBehind, view.KillShot.Headshot) is not { } fall)
+        if (member.Modern is not { } body || asset.Death(view.KillShot.FromBehind, view.KillShot.Headshot, body.Kneeling) is not { } fall)
         {
             return false;
         }
