@@ -434,6 +434,41 @@ public sealed class Igi1ImpactEffects(MissionWorld mission, IImpactEffectsHost h
             context => KillForRagdollTest(context, logger));
 
         console.Commands.Add(
+            "grenade_test",
+            "Tells soldiers of a grenade in front of one, for what they do about it: grenade_test [thrown|land|flash] [soldier id] [metres ahead of him].",
+            context =>
+            {
+                if (mission.SoldierPresenter?.Simulation is not { } soldiers || context.Count < 2
+                    || !int.TryParse(context[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int id)
+                    || soldiers.SoldierViews.FirstOrDefault(soldier => soldier.Soldier.Id == id) is not { } view
+                    || !soldiers.Brains.TryGetValue(view, out var brain))
+                {
+                    context.Warn("grenade_test [thrown|land|flash] [soldier id] [metres ahead of him]: no such soldier here.");
+                    return;
+                }
+
+                double metres = context.Count > 2 && double.TryParse(context[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ahead) ? ahead : 3.0;
+                Vector3d at = brain.Position + new Vector3d(-Math.Sin(brain.Facing) * metres * WorldScene.UnitsPerMetre, Math.Cos(brain.Facing) * metres * WorldScene.UnitsPerMetre, 0.5 * WorldScene.UnitsPerMetre);
+                switch (context[0].ToLowerInvariant())
+                {
+                    case "thrown":
+                        soldiers.NotifyGrenadeThrown(at);
+                        break;
+                    case "land":
+                        soldiers.NotifyGrenadeLand(at);
+                        break;
+                    case "flash":
+                        soldiers.NotifyFlashbang(at);
+                        break;
+                    default:
+                        context.Warn("grenade_test: thrown, land or flash.");
+                        return;
+                }
+
+                logger.Warning("Impact", $"grenade_test: {context[0]} by soldier {id}.");
+            });
+
+        console.Commands.Add(
             "impact_test",
             "Runs the struck material's own GunShotEffect where the crosshair points.",
             context =>

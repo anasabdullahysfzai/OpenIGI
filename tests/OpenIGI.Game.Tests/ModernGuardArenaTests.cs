@@ -48,6 +48,38 @@ public sealed class ModernGuardArenaTests(ITestOutputHelper output)
         });
     }
 
+    /// <summary>A flashbang has him blinded for as long as his script's clip for it runs, so that a modern body can show it, and then he is not.</summary>
+    [RequiresGameDataFact]
+    public void AFlashbangBlindsHimUntilHisClipEnds()
+    {
+        With(() =>
+        {
+            ModernArena arena = new(70.0);
+            arena.Build();
+            int tick = 0;
+            Igi1HumanAi guard = arena.Patrol(ModernArena.At(35, 10), 0f, _ => { }, seed: 11, type: AiType.GuardAk, archetype: "guard");
+            Vector3d away = ModernArena.At(35, 60);
+            for (tick = 1; tick <= 30; tick++)
+            {
+                arena.Tick(guard, tick, away);
+                Assert.False(guard.Blinded);
+            }
+
+            Assert.True(guard.ReceiveFlashbang(guard.Position + new Vector3d(0.0, 3.0 * Metre, 1.0 * Metre)));
+            int blinded = 0;
+            for (; tick <= 60; tick++)
+            {
+                arena.Tick(guard, tick, away);
+                blinded += guard.Blinded ? 1 : 0;
+            }
+
+            Assert.True(blinded > 0, "the flashbang did not blind him");
+            guard.ReportAnimationFinished();
+            arena.Tick(guard, tick, away);
+            Assert.False(guard.Blinded);
+        });
+    }
+
     /// <summary>A sniper keeps the original's stand: he fires from where he is, and goes nowhere.</summary>
     [RequiresGameDataFact]
     public void ASniperStaysWhereHeIs()

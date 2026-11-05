@@ -74,6 +74,12 @@ public sealed partial class Igi1HumanAi
     /// <summary>Gets a value indicating whether he is in the middle of checking a body or waving the squad on.</summary>
     public bool HoldsGesture => _lastTick < _actUntil;
 
+    // The clip every archetype's script plays on AIEVENT_FLASHBANG.
+    private const int FlashbangAnimation = 39;
+
+    /// <summary>Gets whether he is blinded by a flashbang: what his script's clip for it has him doing, which a modern body plays its own way.</summary>
+    public bool Blinded => GameplayCVars.ModernAi.Value && _scriptedAnimation && RequestedAnimation == FlashbangAnimation;
+
     /// <summary>Gets a value indicating whether he kneels and looks about him.</summary>
     public bool KneelScanning => _lastTick < _scanFrom + (int)(ScanSeconds * 30f);
 

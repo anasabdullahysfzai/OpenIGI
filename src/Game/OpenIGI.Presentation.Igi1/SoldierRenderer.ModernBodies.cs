@@ -106,6 +106,19 @@ public sealed partial class SoldierRenderer
 
         double dx = member.TickWhere.X - member.PrevTickWhere.X, dy = member.TickWhere.Y - member.PrevTickWhere.Y;
         float moved = member.HasTickState ? (float)Math.Sqrt((dx * dx) + (dy * dy)) : 0f;
+
+        // Blinded: his own stagger, once. The hidden original's clip still drifts him a little, which is not walking, and would end it.
+        if (_sim.Brains.TryGetValue(view, out Igi1HumanAi? flashed) && !view.IsDead)
+        {
+            if (flashed.Blinded && !_modernBlinded.GetValueOrDefault(member))
+            {
+                body.Act(asset.FlashStagger);
+            }
+
+            _modernBlinded[member] = flashed.Blinded;
+            moved = flashed.Blinded && !ReferenceEquals(asset.FlashStagger, ModernClip.None) ? 0f : moved;
+        }
+
         // In a fight his rifle comes up, and his shots fire it.
         bool aiming = _sim.Brains.TryGetValue(view, out Igi1HumanAi? fighter)
             && (fighter.HasCombatRecord || fighter.Activity is AiSoldierActivity.Engaging or AiSoldierActivity.FiringAtTask);
@@ -208,6 +221,7 @@ public sealed partial class SoldierRenderer
     }
 
     private readonly Dictionary<SoldierMember, string> _modernForcedSeen = [];
+    private readonly Dictionary<SoldierMember, bool> _modernBlinded = [];
     private int _modernForcedTicks;
 
     // A test range's pose (dev_modern_pose), whatever the soldier is doing: the clips played on the spot at their own pace.

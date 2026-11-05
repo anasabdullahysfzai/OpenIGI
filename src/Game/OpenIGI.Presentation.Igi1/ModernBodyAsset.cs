@@ -361,6 +361,9 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <inheritdoc cref="Reload"/>
     public ModernClip Throw { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets the stagger of a man blinded by a flashbang, played once (<c>flash_stagger</c>), or none where the file has none.</summary>
+    public ModernClip FlashStagger { get; private set; } = ModernClip.None;
+
     /// <summary>Gets the weapon bone the rifle is skinned to, its motion baked into every clip by the build; -1 where there is none.</summary>
     public int Weapon => Array.IndexOf(Names, "weapon");
 
@@ -557,6 +560,7 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.Reload = Optional("reload", travelling: false, ModernClip.None);
         asset.KneelReload = Optional("kneel_reload", travelling: false, asset.Reload);
         asset.Throw = Optional("throw", travelling: false, ModernClip.None);
+        asset.FlashStagger = Optional("flash_stagger", travelling: false, ModernClip.None);
         asset.StopClips = [.. StopClipNames
             .Select(name => Optional(name, travelling: false, ModernClip.None)).Where(clip => !ReferenceEquals(clip, ModernClip.None))];
         asset.CrouchWalk = Optional("crouch_walk", travelling: true, asset.AimWalk);
