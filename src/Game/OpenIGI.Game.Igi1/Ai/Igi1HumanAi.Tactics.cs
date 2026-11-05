@@ -267,8 +267,87 @@ public sealed partial class Igi1HumanAi
         }
     }
 
+    /// <summary>How far out he leans from cover and how far down, in metres, to his left and his right: what the lean clips move his head and rifle by, measured off them, which his eye and rounds start from. Between his head's figure and his rifle's.</summary>
+    public const double LeanLeftMetres = 0.43, LeanLeftDownMetres = 0.06, LeanRightMetres = 0.32, LeanRightDownMetres = 0.10;
+
+    /// <summary>How long a lean takes, in ticks.</summary>
+    public const int LeanTicks = 8;
+
+    /// <summary>How long a man reaching tall cover stays in before he comes to its edge to lean out, in ticks.</summary>
+    public const int LeanAfterCoverTicks = 15;
+
+    private int _leanSide;
+    private bool _peeking;
+    private int _leanFrom;
+    private double _leanShare;
+
+    /// <summary>Gets or sets whether his body can show a lean: without the clips for it he would see and fire round a corner, standing behind it.</summary>
+    public bool CanLean { get; set; }
+
+    /// <summary>Gets which way he is leaning out from cover: 1 to his right, -1 to his left, 0 not at all.</summary>
+    public int LeanSide => _leanSide != 0 ? _leanSide : _leanShare > 0.0 ? _leanFrom : 0;
+
+    /// <summary>Gets how far his lean has him out of his place: his eye and his rounds start this far out.</summary>
+    public Vector3d LeanOffset => _leanShare <= 0.0 ? default : LeanOut(LeanSide, Math.Cos(Facing), Math.Sin(Facing)) * _leanShare;
+
+    // A full lean to a side, from the way his right lies.
+    private static Vector3d LeanOut(int side, double rightX, double rightY)
+    {
+        (double metres, double down) = side > 0 ? (LeanRightMetres, LeanRightDownMetres) : (-LeanLeftMetres, LeanLeftDownMetres);
+        return new Vector3d(rightX * metres, rightY * metres, -down) * GraphNode.MetreInUnits;
+    }
+
+    // Whether he faces near enough toward a place to come out to it: within some twenty degrees.
+    private bool FacingFor(Vector3d place)
+    {
+        double dx = place.X - Position.X, dy = place.Y - Position.Y, length = Math.Max(1.0, Math.Sqrt((dx * dx) + (dy * dy)));
+        return ((-Math.Sin(Facing) * dx) + (Math.Cos(Facing) * dy)) / length > 0.94;
+    }
+
+    private void LeanOut(int tick, int side)
+    {
+        _leanSide = side;
+        StartFiring(tick);
+        ModernLog?.Invoke(side > 0 ? "leans out to his right" : "leans out to his left");
+    }
+
+    // Which way a man down behind cover can lean to see the player, his rifle's side first; 0 where neither, or where he needs no lean.
+    private int FindLean(Vector3d target)
+    {
+        // Not with his time here up: he would lean out only to move on.
+        if (!CanLean || _lastTick >= _holdUntil)
+        {
+            return 0;
+        }
+
+        double metre = GraphNode.MetreInUnits;
+        Vector3d eye = new(Position.X, Position.Y, Position.Z + (CoverHeadMetres * metre));
+        Vector3d chest = new(target.X, target.Y, target.Z + (1.2 * metre));
+        double dx = target.X - Position.X, dy = target.Y - Position.Y, length = Math.Max(1.0, Math.Sqrt((dx * dx) + (dy * dy)));
+        if (_sight!(eye, chest, null))
+        {
+            return 0;
+        }
+
+        foreach (int side in (int[])[1, -1])
+        {
+            Vector3d leaned = eye + LeanOut(side, dy / length, -dx / length);
+            if (_sight(eye, leaned, null) && _sight(leaned, chest, null))
+            {
+                return side;
+            }
+        }
+
+        return 0;
+    }
+
     private bool FightModernTick(int tick, Vector3d enemy)
     {
+        // A lean is for firing from where he is down; anything else, and he comes back in.
+        _leanSide = _tactic == TacticPhase.Firing ? _leanSide : 0;
+        _leanFrom = _leanSide != 0 ? _leanSide : _leanFrom;
+        _leanShare = Math.Clamp(_leanShare + ((_leanSide != 0 ? 1.0 : -1.0) / LeanTicks), 0.0, 1.0);
+
         // A grenade he asked for is the original's to throw (the patrol arm's one-shot); one that never went is let go.
         if (_grenadeAsked >= 0 && tick - _grenadeAsked > 60 && _patrolOneShotChild == AiPatrolAction.ThrowGrenade)
         {
@@ -359,6 +438,17 @@ public sealed partial class Igi1HumanAi
                 _tenseRunThisTick = true;
                 SetGait(walking: false);
                 AdvanceInCombat();
+                // Sidling out from cover, and here is its edge: he stops at it and leans round.
+                if (_peeking && _route.Count > 0 && FindLean(target) is var edge and not 0)
+                {
+                    _route.Clear();
+                    DestinationNode = -1;
+                    _movingInCombat = false;
+                    _peeking = false;
+                    LeanOut(tick, edge);
+                    return true;
+                }
+
                 if (_route.Count > 0)
                 {
                     // Running for cover with the man in sight: he keeps going, but backs and sidesteps with his rifle on him.
@@ -382,6 +472,7 @@ public sealed partial class Igi1HumanAi
                 }
 
                 _movingInCombat = false;
+                _peeking = false;
                 if (_tactic == TacticPhase.Advancing)
                 {
                     // At the place he was making for: look again from here.
@@ -455,13 +546,24 @@ public sealed partial class Igi1HumanAi
                     }
 
                     // Up over low cover where he is, or a step out to his firing spot.
-                    if (_downLow || _fireNode == CurrentNode)
+                    // Coming to cover he may have run past it: he turns to the man before he comes out to him.
+                    if (CanLean && !_downLow && _fireNode != CurrentNode && !FacingFor(target))
+                    {
+                        _downUntil = tick + 3;
+                    }
+                    else if (_downLow || _fireNode == CurrentNode)
                     {
                         StartFiring(tick);
                     }
+                    else if (FindLean(target) is var side and not 0)
+                    {
+                        // Tall cover he can see round: he leans out and fires from where he is.
+                        LeanOut(tick, side);
+                    }
                     else if (GoTo(_fireNode))
                     {
-                        // Out to fire, facing where he will fire.
+                        // Out to fire, facing where he will fire, as far as the edge of his cover if he can lean from there.
+                        _peeking = CanLean;
                         _moveStyle = MoveStyle.Strafe;
                         _tactic = TacticPhase.Moving;
                         _phaseSince = tick;
@@ -611,7 +713,9 @@ public sealed partial class Igi1HumanAi
         if (between && canGetDown && (_burstsLeft <= 0 || (underFire && tick - _phaseSince > 15)))
         {
             CancelFire();
-            if (_downLow)
+            bool leaned = _leanSide != 0;
+            _leanSide = 0;
+            if (_downLow || (leaned && CurrentNode == _downNode && Flat(Position, _graph!.NodeAt(_downNode)!.Position) < CrouchReachMetres * GraphNode.MetreInUnits / 2.0))
             {
                 GetDown(tick);
             }
@@ -767,7 +871,8 @@ public sealed partial class Igi1HumanAi
         }
 
         // Where he goes first: his down when the place has one beside it and rounds are about, else his firing spot.
-        int first = fire;
+        // Tall cover beside it, and a body that can lean: to the cover first, to fight from round its edge.
+        int first = CanLean && !low && down >= 0 ? down : fire;
         if (!GoTo(first, claim: true))
         {
             return false;
@@ -791,7 +896,8 @@ public sealed partial class Igi1HumanAi
             _holdUntil = tick + HoldTicks;
         }
 
-        _pendingDown = false;
+        (_pendingDown, _peeking) = (first != fire, false);
+        _downUntil = tick + LeanAfterCoverTicks;
         GraphNode at = _graph!.NodeAt(fire)!;
         if (flanker)
         {
@@ -989,6 +1095,7 @@ public sealed partial class Igi1HumanAi
     {
         _tactic = TacticPhase.None;
         _shotFirst = false;
+        (_leanSide, _leanShare, _peeking) = (0, 0.0, false);
         (_ownSightTick, _stoppedRunTick) = (0, -StopAgainTicks);
         (_fireNode, _downNode, _downLow) = (-1, -1, false);
         _lastKnown = null;

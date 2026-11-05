@@ -48,6 +48,64 @@ public sealed class ModernGuardArenaTests(ITestOutputHelper output)
         });
     }
 
+    /// <summary>Down behind tall cover, a man who can see round it leans out and fires from where he is, his eye out with him, and comes back in; with no clips to show it, he steps out as before.</summary>
+    [RequiresGameDataTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AManBehindTallCoverLeansOutToFire(bool canLean)
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(60.0).Box(26, 14, 0, 34, 15, 3.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Igi1HumanAi guard = arena.Patrol(ModernArena.At(23, 11), 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"), seed: 11);
+            guard.CanLean = canLean;
+            Vector3d player = ModernArena.At(30, 30);
+            int leaning = 0, fired = 0, clearEye = 0;
+            Vector3d? from = null;
+            double furthest = 0.0, worst = 0.0;
+            for (tick = 1; tick <= 60 * 30; tick++)
+            {
+                if (tick % 40 == 0 && guard.CoverState == "Firing")
+                {
+                    arena.Shoot(guard, player, guard.Position + new Vector3d(1.0 * Metre, 0, 1.2 * Metre));
+                }
+
+                arena.Tick(guard, tick, player);
+                if (guard.LeanSide != 0 && guard.CoverState == "Firing")
+                {
+                    leaning++;
+                    from ??= guard.Position;
+                    worst = Math.Max(worst, Vector3d.Distance(from.Value, guard.Position) / Metre);
+                    fired += guard.Combat.PullTrigger ? 1 : 0;
+                    clearEye += guard.CanSeeForTesting(guard.EyePosition(), player + new Vector3d(0, 0, 1.2 * Metre)) ? 1 : 0;
+                    furthest = Math.Max(furthest, Vector3d.Distance(guard.EyePosition(), guard.EyePosition() - guard.LeanOffset) / Metre);
+                }
+                else
+                {
+                    from = null;
+                }
+            }
+
+            int outs = story.Count(line => line.Contains("leans out", StringComparison.Ordinal));
+            output.WriteLine(string.Join("\n", story.Where(s => !s.Contains("says", StringComparison.Ordinal))));
+            output.WriteLine($"{outs} leans, {leaning} ticks, {fired} firing, eye clear {clearEye}, drifted {worst:0.00} m, furthest {furthest:0.00} m");
+            if (!canLean)
+            {
+                Assert.Equal(0, outs);
+                return;
+            }
+
+            Assert.True(outs > 0, "he never leaned out");
+            Assert.True(fired > 0, "he never fired from his lean");
+            Assert.True(clearEye > leaning / 2, $"his eye cleared the wall for {clearEye} of {leaning} ticks");
+            Assert.True(worst < 0.2, $"he drifted {worst:0.00} m while leaning");
+            Assert.InRange(furthest, Igi1HumanAi.LeanRightMetres, Igi1HumanAi.LeanLeftMetres + 0.1);
+        });
+    }
+
     /// <summary>A flashbang has him blinded for as long as his script's clip for it runs, so that a modern body can show it, and then he is not.</summary>
     [RequiresGameDataFact]
     public void AFlashbangBlindsHimUntilHisClipEnds()

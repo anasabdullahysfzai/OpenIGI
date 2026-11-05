@@ -404,7 +404,7 @@ internal sealed class SoldierContext(IOpenIgiLogger logger)
         // The brain has already moved this tick; the view is placed after the fire.
         Vector3d feet = brain.Position;
         double origin = feet.Z + view.RootSample.Z;
-        return new Vector3d(feet.X, feet.Y, origin + (brain.Body.CrouchByte ? 1433.6 : 2867.24));
+        return new Vector3d(feet.X, feet.Y, origin + (brain.Body.CrouchByte ? 1433.6 : 2867.24)) + brain.LeanOffset;
     }
 
     /// <summary>

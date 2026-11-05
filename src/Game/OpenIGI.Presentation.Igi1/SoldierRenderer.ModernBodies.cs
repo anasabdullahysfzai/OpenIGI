@@ -116,6 +116,7 @@ public sealed partial class SoldierRenderer
             }
 
             _modernBlinded[member] = flashed.Blinded;
+            flashed.CanLean = !ReferenceEquals(asset.LeanLeft, ModernClip.None) && !ReferenceEquals(asset.LeanRight, ModernClip.None);
             moved = flashed.Blinded && !ReferenceEquals(asset.FlashStagger, ModernClip.None) ? 0f : moved;
         }
 
@@ -212,7 +213,7 @@ public sealed partial class SoldierRenderer
         }
 
         body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming || ready, member.Agent.ShotSequence, kneeling, keepsDown, turning,
-            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false, limp: fighter?.LimpLeg ?? 0);
+            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false, limp: fighter?.LimpLeg ?? 0, lean: fighter?.LeanSide ?? 0);
         if (GameplayCVars.BodyLog.Value >= 0 && GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(
@@ -399,10 +400,10 @@ public sealed partial class SoldierRenderer
             "look_right" => new Vector3(MathF.Sin(MathF.PI / 3f), MathF.Cos(MathF.PI / 3f), 0f),
             _ => default,
         };
-        aiming |= forced == "aim_up";
+        aiming |= forced is "aim_up" or "lean_left" or "lean_right";
         float forcedRaise = Raise(member, member.Agent.View);
         _modernStandingHeights[member] = member.TickWhere.Z + forcedRaise; // the height a fall from this pose starts at
-        body.Tick(moved, yaw, forcedRaise, aiming, shots, kneeling: forced is "kneel" or "kneel_aim" or "kneel_scan", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look, scanning: forced == "kneel_scan");
+        body.Tick(moved, yaw, forcedRaise, aiming, shots, kneeling: forced is "kneel" or "kneel_aim" or "kneel_scan", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look, scanning: forced == "kneel_scan", lean: forced == "lean_left" ? -1 : forced == "lean_right" ? 1 : 0);
     }
 
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.

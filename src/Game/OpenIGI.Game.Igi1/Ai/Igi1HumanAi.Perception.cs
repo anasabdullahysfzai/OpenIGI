@@ -1005,8 +1005,8 @@ public sealed partial class Igi1HumanAi
     /// IGI1 snapshots palette offsets 684/688/692, which resolve to bone 5's position. Headless tests and
     /// callers without a rig fall back to the separation cylinder's read half-height.
     /// </remarks>
-    public Vector3d EyePosition() => _eyePosition?.Invoke()
-        ?? new Vector3d(Position.X, Position.Y, Position.Z + HumanSeparationEyeHeight);
+    public Vector3d EyePosition() => (_eyePosition?.Invoke()
+        ?? new Vector3d(Position.X, Position.Y, Position.Z + HumanSeparationEyeHeight)) + LeanOffset;
 
     private Matrix3f EyeOrientation() => TurnedByGaze(_eyeOrientation?.Invoke() ?? Orientation);
 

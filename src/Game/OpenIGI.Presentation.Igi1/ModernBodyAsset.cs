@@ -364,6 +364,12 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the stagger of a man blinded by a flashbang, played once (<c>flash_stagger</c>), or none where the file has none.</summary>
     public ModernClip FlashStagger { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets the lean out from cover, to his left and to his right (<c>lean_left</c>, <c>lean_right</c>), or none where the file has none.</summary>
+    public ModernClip LeanLeft { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="LeanLeft"/>
+    public ModernClip LeanRight { get; private set; } = ModernClip.None;
+
     /// <summary>Gets the weapon bone the rifle is skinned to, its motion baked into every clip by the build; -1 where there is none.</summary>
     public int Weapon => Array.IndexOf(Names, "weapon");
 
@@ -561,6 +567,8 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.KneelReload = Optional("kneel_reload", travelling: false, asset.Reload);
         asset.Throw = Optional("throw", travelling: false, ModernClip.None);
         asset.FlashStagger = Optional("flash_stagger", travelling: false, ModernClip.None);
+        asset.LeanLeft = Optional("lean_left", travelling: false, ModernClip.None);
+        asset.LeanRight = Optional("lean_right", travelling: false, ModernClip.None);
         asset.StopClips = [.. StopClipNames
             .Select(name => Optional(name, travelling: false, ModernClip.None)).Where(clip => !ReferenceEquals(clip, ModernClip.None))];
         asset.CrouchWalk = Optional("crouch_walk", travelling: true, asset.AimWalk);
