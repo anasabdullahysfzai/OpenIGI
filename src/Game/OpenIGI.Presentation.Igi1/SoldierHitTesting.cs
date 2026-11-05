@@ -315,11 +315,10 @@ internal sealed class SoldierHitTesting(
         Vector3f forward = new Vector3f(m.M12, m.M22, m.M32).NormalizedOr(Vector3f.UnitY);
         float localForward = (incoming.X * forward.X) + (incoming.Y * forward.Y);
         float localSide = (incoming.X * -forward.Y) + (incoming.Y * forward.X);
+
+        // Not the original's proximity zone: its lookup of the head bone returns his origin, so it makes a hit near his middle a
+        // headshot. The triangle struck says what was hit, and a round to the head scores the neck's zone, every bit as lethal.
         int zone = HumanDamage.RefineByDirection(HumanDamage.ZoneOfBodyPart(part), localForward, localSide);
-        if (HumanDamage.TakesProximityZone((float)Vector3d.Distance(contact, root), localForward))
-        {
-            zone = HumanDamage.ProximityZone;
-        }
 
         Vector3f normal = new(
             (m.M11 * n.X) + (m.M12 * n.Y) + (m.M13 * n.Z), (m.M21 * n.X) + (m.M22 * n.Y) + (m.M23 * n.Z), (m.M31 * n.X) + (m.M32 * n.Y) + (m.M33 * n.Z));

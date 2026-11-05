@@ -498,7 +498,7 @@ public sealed partial class SoldierRenderer
     public const float RagdollAfterShotgunSeconds = 0.1f, RagdollAfterSeconds = 0.25f, RagdollAfterRunningSeconds = 0.1f;
 
     /// <summary>Above this speed, in metres a second, a man shot dead counts as running.</summary>
-    public const double RagdollRunningMetresPerSecond = 2.0;
+    public const double RagdollRunningMetresPerSecond = 2.2;
 
     private ModernRagdoll? _modernRagdoll;
     private ModernBodyAsset? _modernRagdollOf;

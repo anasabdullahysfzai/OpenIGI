@@ -12,6 +12,11 @@ namespace OpenIGI.Desktop.Tests;
 /// </summary>
 public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
 {
+    /// <summary>A limping man is never fast enough to count as running when he is shot dead, or he would skip the deaths for a man on his feet.</summary>
+    [Fact]
+    public void ALimpingManDoesNotCountAsRunningWhenHeDies() =>
+        Assert.True(OpenIGI.Game.Igi1.Ai.Igi1HumanAi.LimpRunMetresPerSecond < SoldierRenderer.RagdollRunningMetresPerSecond);
+
     /// <summary>Where the character is: <c>OPENIGI_MODERN_BODY</c>, else the play-test's file beside the checkout.</summary>
     public static readonly string File = Environment.GetEnvironmentVariable("OPENIGI_MODERN_BODY")
         ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../../animations/gltf/swat_guy_game.glb"));
