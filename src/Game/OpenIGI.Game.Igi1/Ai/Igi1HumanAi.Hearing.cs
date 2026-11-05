@@ -1,3 +1,4 @@
+using OpenIGI.Formats.Ai;
 using OpenIGI.Core.Numerics;
 using OpenIGI.Game.Ai;
 
@@ -101,9 +102,9 @@ public sealed partial class Igi1HumanAi
     }
 
     /// <summary>
-    /// The modern AI's answer to his own side's gunfire within its range: the shooter's fight is his, as a squad alert from
-    /// the shooter would make it; a soldier whose script will not take the alert goes to look instead. Retail drops a
-    /// shot from his own side unheard.
+    /// The modern AI's answer to his own side's gunfire within its range: he goes on edge and makes for the sound, to see for himself.
+    /// He learns nothing of who is being shot at, and fires on nobody, so one guard's fight does not run from gun to gun across a base,
+    /// everyone knowing where the player is. A guard does not leave his leash for it: he looks. Retail drops a shot from his own side unheard.
     /// </summary>
     /// <param name="origin">Where the shot was fired.</param>
     /// <param name="range">How far the shot carries.</param>
@@ -117,13 +118,14 @@ public sealed partial class Igi1HumanAi
             return false;
         }
 
-        if (!ReceiveAlert(origin, shooter.RuntimeId, shooter.TargetId, range))
-        {
-            _heardAt = origin;
-        }
-
+        _onEdgeUntilTick = Math.Max(_onEdgeUntilTick, _lastTick + OnEdgeTicks);
+        _heardGunfire = !HoldsPost || Flat(origin, _post) <= PostLeashMetres * GraphNode.MetreInUnits;
+        _heardAt = origin;
         return true;
     }
+
+    // Whether what he heard is gunfire he is to make for at a jog, whatever his suspicion of the player.
+    private bool _heardGunfire;
 
     /// <summary>
     /// Turns him to what he heard or glimpsed, and walks him over to it when he is suspicious enough; once a tick, before the
@@ -142,8 +144,15 @@ public sealed partial class Igi1HumanAi
         }
 
         _heardAt = null;
+        if (OnAlarmRun)
+        {
+            _redirect = _heardGunfire = false;
+            return;
+        }
+
         bool redirect = _redirect;
-        _redirect = false;
+        bool gunfire = _heardGunfire;
+        (_redirect, _heardGunfire) = (false, false);
 
         // Something new is worth more than a search of something old: it ends the search. Only a look or a walk at something
         // heard or glimpsed keeps going.
@@ -154,10 +163,10 @@ public sealed partial class Igi1HumanAi
         }
 
         CancelSearch();
-        bool walkOver = PlayerSuspicion >= WalkOverSuspicion;
+        bool walkOver = gunfire || PlayerSuspicion >= WalkOverSuspicion;
         InvestigatingAt = heard;
         ModernLog?.Invoke(FormattableString.Invariant(
-            $"{(!walkOver ? "looks at" : PlayerSuspicion >= JogSuspicion ? "jogs over to" : "walks over to")} something {Vector3d.Distance(Position, heard) / 4096.0:0.0} m away, suspicion {PlayerSuspicion:0.00}"));
+            $"{(!walkOver ? "looks at" : gunfire || PlayerSuspicion >= JogSuspicion ? "jogs over to" : "walks over to")} something {Vector3d.Distance(Position, heard) / 4096.0:0.0} m away, suspicion {PlayerSuspicion:0.00}"));
 
         // A walk over ends in a search of the place, once he has looked and found nothing (ContinueSearch).
         _investigationWalked = walkOver;
@@ -169,7 +178,7 @@ public sealed partial class Igi1HumanAi
         Vector3d? past = walkOver && across > 1.0
             ? new Vector3d(heard.X + (dx * LookPastInUnits / across), heard.Y + (dy * LookPastInUnits / across), heard.Z)
             : null;
-        Install(heard, walkOver, LookSeconds, past, run: walkOver && PlayerSuspicion >= JogSuspicion);
+        Install(heard, walkOver, LookSeconds, past, run: walkOver && (gunfire || PlayerSuspicion >= JogSuspicion));
     }
 
     /// <summary>Installs a walk to a point and a look, or a look alone, as the script installs its own actions.</summary>

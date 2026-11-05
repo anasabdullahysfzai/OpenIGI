@@ -129,6 +129,63 @@ public sealed class ModernCoverMissionTests(Xunit.Abstractions.ITestOutputHelper
         }
     }
 
+    /// <summary>
+    /// With the alarm on, a guard with an alarm patrol keeps to it and looks into no gunfire: his script orders it each tick, and an
+    /// order to go and look lasted a tick and began again, seventeen times a second. A guard without one still goes to look.
+    /// </summary>
+    [RequiresGameDataFact]
+    public void AnAlarmRunIsNotInterruptedByGunfire()
+    {
+        bool previous = GameplayCVars.ModernAi.Value;
+        GameplayCVars.ModernAi.Value = true;
+        try
+        {
+            using SoldierRendererScenario scenario = SoldierRendererScenario.CreateScenario(prepareContainers: true, missionNumber: 1, combatRows: true);
+            for (int tick = 0; tick < 10; tick++)
+            {
+                scenario.Renderer.Tick();
+            }
+
+            IReadOnlyList<Igi1HumanAi> brains = scenario.Renderer.Simulation.BrainsForTesting;
+            Igi1HumanAi Run(int id, out List<string> story)
+            {
+                Igi1HumanAi guard = brains.First(b => b.GuardId == id);
+                Igi1HumanAi other = brains.First(b => b.GuardId == 2003);
+                List<string> told = [];
+                guard.ModernLog = text => told.Add(text);
+                Vector3d far = guard.Position + new Vector3d(0, 0, -300.0 * Metre);
+                for (int tick = 1; tick <= 120; tick++)
+                {
+                    if (tick > 60 && tick % 3 == 0)
+                    {
+                        guard.HearAllyFire(guard.Position + new Vector3d(15.0 * Metre, 15.0 * Metre, 0.0), 60.0 * Metre, other);
+                    }
+
+                    double stride = guard.WalksForward ? 0.1 * Metre : 0.0;
+                    guard.Tick(tick, far + new Vector3d(0, 0, 1.6 * Metre), rootMotionThisTick: stride, alarmOn: true, enemyFeet: far);
+                    guard.StepBodyAfterClip(stride, 0.0);
+                }
+
+                story = told;
+                output.WriteLine($"guard {id}: on alarm run {guard.OnAlarmRun}, doing {guard.RunningAction}; {string.Join(" | ", told.TakeLast(4))}");
+                return guard;
+            }
+
+            Igi1HumanAi running = Run(2011, out List<string> runner);
+            Assert.True(running.OnAlarmRun, "guard 2011 has an alarm patrol");
+            Assert.Equal("Patrol", running.RunningAction);
+            Assert.DoesNotContain(runner, line => line.Contains("found nothing", StringComparison.Ordinal) || line.Contains("jogs over", StringComparison.Ordinal));
+
+            Igi1HumanAi free = Run(2004, out List<string> looker);
+            Assert.False(free.OnAlarmRun, "guard 2004 has no alarm patrol");
+            Assert.Contains(looker, line => line.Contains("jogs over", StringComparison.Ordinal));
+        }
+        finally
+        {
+            GameplayCVars.ModernAi.Value = previous;
+        }
+    }
+
     // The player ten metres ahead of the guard where the guard can see him; fight, a round in him, and what he does.
     private static string? Attempt(Igi1HumanAi guard, List<string> tried)
     {

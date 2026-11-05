@@ -473,6 +473,7 @@ public sealed partial class Igi1HumanAi
             }
         }
 
+        _alarmRunOrdered &= alarmOn;
         if (alarmOn)
         {
             Events.Post(AiEventRecord.Simple(AiEvent.AlarmOn), owner: 0, worldTests: null);

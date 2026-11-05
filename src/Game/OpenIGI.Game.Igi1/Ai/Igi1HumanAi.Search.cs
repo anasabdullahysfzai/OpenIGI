@@ -92,6 +92,12 @@ public sealed partial class Igi1HumanAi
     /// <summary>Gets whether the soldier is searching, or has lately searched: his suspicion fills twice as fast.</summary>
     public bool IsOnEdge => _searching || _lastTick < _onEdgeUntilTick;
 
+    // Whether his script has ordered his alarm patrol, this alarm.
+    private bool _alarmRunOrdered;
+
+    /// <summary>Gets whether he is on the patrol his script orders while the alarm sounds: he makes for his place, and looks into nothing on the way. The script orders it again only when something takes him off it.</summary>
+    public bool OnAlarmRun => GameplayCVars.ModernAi.Value && _alarmRunOrdered && Route is not null;
+
     /// <summary>
     /// Starts a search once a walk-over investigation has ended with nothing found, and installs its next step once the last
     /// has run; once a tick, before the script, so a step between two others is not taken for idleness.
@@ -101,6 +107,14 @@ public sealed partial class Igi1HumanAi
         if (_combatInstalled || Activity == AiSoldierActivity.Dead)
         {
             CancelSearch();
+            return;
+        }
+
+        // On his way where the alarm sends him: his script orders the run again each tick, and no step of a search would last a tick.
+        if (OnAlarmRun)
+        {
+            CancelSearch();
+            _investigationWalked = false;
             return;
         }
 

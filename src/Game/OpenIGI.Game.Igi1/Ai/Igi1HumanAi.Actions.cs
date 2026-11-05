@@ -69,6 +69,11 @@ public sealed partial class Igi1HumanAi
             return;
         }
 
+        if (_currentEventType == AiEvent.AlarmOn && actions.Any(action => action.Name == ActionPatrol))
+        {
+            _alarmRunOrdered = true;
+        }
+
         _pendingActions.PopToPushable(action => EndAction(action.Name));
         bool pushable = (FlagsOf(actions[^1]) & AiActionFlagWord.Pushable) != 0;
         for (int index = actions.Count - 1; index >= 0; index--)

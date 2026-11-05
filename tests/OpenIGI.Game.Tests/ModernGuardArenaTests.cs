@@ -106,6 +106,83 @@ public sealed class ModernGuardArenaTests(ITestOutputHelper output)
         });
     }
 
+    /// <summary>A soldier who hears his own side's gunfire makes for the sound; he does not start fighting or learn where the player is until he sees him for himself.</summary>
+    [RequiresGameDataFact]
+    public void GunfireSendsHimToLookNotIntoTheFight()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(70.0).Box(0, 44, 0, 70, 45, 4.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Vector3d from = ModernArena.At(35, 10), hidden = ModernArena.At(35, 60), shot = ModernArena.At(35, 34);
+            Igi1HumanAi soldier = arena.Patrol(from, 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"), seed: 11);
+            Igi1HumanAi shooter = arena.Patrol(shot, 0f, _ => { }, seed: 12);
+            for (tick = 1; tick <= 30; tick++)
+            {
+                arena.Tick(soldier, tick, hidden);
+            }
+
+            Assert.True(soldier.HearAllyFire(shot, 30.0 * Metre, shooter));
+            double nearest = double.MaxValue;
+            for (; tick <= 450; tick++)
+            {
+                arena.Tick(soldier, tick, hidden);
+                nearest = Math.Min(nearest, Vector3d.Distance(soldier.Position, shot) / Metre);
+                Assert.NotEqual(AiSoldierActivity.Engaging, soldier.Activity);
+                Assert.Null(soldier.LastKnownForTesting);
+            }
+
+            output.WriteLine(string.Join("\n", story));
+            output.WriteLine($"got to {nearest:0.0} m of the sound from 24 m");
+            Assert.Contains(story, line => line.Contains("jogs over to", StringComparison.Ordinal));
+            Assert.True(soldier.IsOnEdge, "the shot did not put him on edge");
+            Assert.True(nearest < 18.0, $"he got no nearer than {nearest:0.0} m");
+
+            // In plain view now: this fight is his own.
+            int until = tick + 300;
+            for (; tick <= until && soldier.Activity != AiSoldierActivity.Engaging; tick++)
+            {
+                Vector3f ahead = soldier.Orientation.Column2;
+                arena.Tick(soldier, tick, soldier.Position + (new Vector3d(ahead.X, ahead.Y, 0.0) * (10.0 * Metre)));
+            }
+
+            Assert.Equal(AiSoldierActivity.Engaging, soldier.Activity);
+        });
+    }
+
+    /// <summary>A guard hearing gunfire beyond his leash looks that way and stays at his post.</summary>
+    [RequiresGameDataFact]
+    public void AGuardLooksAtFarGunfireAndStaysAtHisPost()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(70.0).Box(0, 44, 0, 70, 45, 4.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Vector3d post = ModernArena.At(35, 10), hidden = ModernArena.At(35, 60), shot = ModernArena.At(35, 34);
+            Igi1HumanAi guard = arena.Patrol(post, 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"), seed: 11, type: AiType.GuardAk, archetype: "guard");
+            Igi1HumanAi shooter = arena.Patrol(shot, 0f, _ => { }, seed: 12);
+            for (tick = 1; tick <= 30; tick++)
+            {
+                arena.Tick(guard, tick, hidden);
+            }
+
+            Assert.True(guard.HearAllyFire(shot, 30.0 * Metre, shooter));
+            for (; tick <= 150; tick++)
+            {
+                arena.Tick(guard, tick, hidden);
+                Assert.NotEqual(AiSoldierActivity.Engaging, guard.Activity);
+            }
+
+            output.WriteLine(string.Join("\n", story));
+            Assert.Contains(story, line => line.Contains("looks at", StringComparison.Ordinal));
+            Assert.True(Vector3d.Distance(post, guard.Position) < 1.0 * Metre, "he left his post");
+        });
+    }
+
     /// <summary>A flashbang has him blinded for as long as his script's clip for it runs, so that a modern body can show it, and then he is not.</summary>
     [RequiresGameDataFact]
     public void AFlashbangBlindsHimUntilHisClipEnds()

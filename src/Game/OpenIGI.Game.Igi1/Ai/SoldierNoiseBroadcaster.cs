@@ -78,7 +78,7 @@ internal sealed class SoldierNoiseBroadcaster(SoldierContext context)
             int shooterId = except?.Soldier.Id ?? AiDetectionCandidate.PlayerId;
             bool sameSide = shooterTeam == view.Soldier.Team;
 
-            // The modern AI: his own side's gunfire brings him into the shooter's fight instead.
+            // The modern AI: his own side's gunfire sends him to see what it is.
             if (sameSide && GameplayCVars.ModernAi.Value && except is not null && _context.Brains.TryGetValue(except, out Igi1HumanAi? ally))
             {
                 return brain.HearAllyFire(origin, range, ally);
