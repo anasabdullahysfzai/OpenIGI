@@ -245,12 +245,56 @@ internal sealed class ModernBody : IDisposable
 
     /// <summary>Starts the body's fall, which every tick after plays once and then holds.</summary>
     /// <param name="fall">The fall (<see cref="ModernBodyAsset.Death"/>).</param>
-    public void Fall(ModernClip fall)
+    /// <param name="brief">Whether it is a short fall a ragdoll finishes, rather than one that ends on the ground.</param>
+    public void Fall(ModernClip fall, bool brief = false)
     {
+        FallIsBrief = brief;
         _fall = fall;
         _fallTime = 0f;
         _inertia.Begin = true;
     }
+
+    /// <summary>Gets how long the fall has played, in seconds.</summary>
+    public float FallTime => _fallTime;
+
+    /// <summary>Gets how long the fall is, in seconds.</summary>
+    public float FallDuration => _fall?.Duration ?? 0f;
+
+    /// <summary>Gets a value indicating whether the fall is a short one a ragdoll finishes.</summary>
+    public bool FallIsBrief { get; private set; }
+
+    /// <summary>Gets the last two ticks' skeletons and how far each was raised, which a ragdoll takes over from.</summary>
+    internal (Matrix4x4[] Now, Matrix4x4[] Before, float Lift, float LiftBefore) Kept => (_worldNow, _worldBefore, _keptLift, _keptLiftBefore);
+
+    /// <summary>Takes one tick's skeleton from elsewhere (<see cref="ModernRagdoll"/>), its places already from where he is drawn.</summary>
+    /// <param name="write">Writes the skeleton.</param>
+    /// <param name="yaw">The character's extra turn about up, in radians.</param>
+    internal void TickPosed(Action<Matrix4x4[]> write, float yaw)
+    {
+        write(_world);
+        int[] joints = _asset.JointOfNode;
+        for (int node = 0; node < _world.Length; node++)
+        {
+            if (joints[node] >= 0)
+            {
+                _skin[joints[node]] = _asset.Joints[joints[node]].InverseBind * _world[node];
+            }
+        }
+
+        NeedsSkin = !_drawnSinceTick;
+        _drawnSinceTick = false;
+        Keep(yaw, 0f);
+    }
+
+    /// <summary>Gets the lowest of him as last skinned, not his rifle, along up, in the soldier's frame, metres, for the log.</summary>
+    internal float LowestSkinned => _vertices.Where((_, v) => !_gunVertices.Contains(v)).Min(v => v.Position.Z);
+
+    private HashSet<int> _gunVertices => _gunVerticesKept ??= [.. _asset.GunVertices];
+
+    private HashSet<int>? _gunVerticesKept;
+
+    /// <summary>Gets where the soldier's feet are in his frame, metres, standing.</summary>
+    internal float Floor => _floor;
 
     // The blends from clip to clip (ModernInertia), and how long since the moving clip last changed.
     private readonly ModernInertia _inertia;
@@ -448,15 +492,11 @@ internal sealed class ModernBody : IDisposable
         LockFeet(travel, turning * TickSeconds, kneeling || _act is not null);
 
         // Drawn every frame (DrawAt), the tick only poses: skinning here too was thrown away by the next frame, and landed on
-        // the tick's frame all at once -- a frame in three twice as long as the others, a hitch thirty times a second. But only
-        // while frames are drawing him: where they stop -- the game draws its frames at the tick, unsmoothed, under a menu, a
-        // cutscene and the like -- the tick skins him again. Waiting on frames that never came froze him, sliding, in his last pose.
-        if (!_drawnSinceTick)
-        {
-            _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
-            _device.UpdateAnimatedMesh(Mesh, _vertices);
-        }
-
+        // the tick's frame all at once -- a frame in three twice as long as the others, a hitch thirty times a second. Where no
+        // smoothed frame has come since the last tick he is marked to be skinned as he is drawn (SkinIfStale). Skinning him here
+        // instead cost 0.4 ms a body on one core: at 99 bodies a tick outran its slot, the clock ran ten ticks to catch up, each
+        // skinning them all, and a frame took 400 ms.
+        NeedsSkin = !_drawnSinceTick;
         _drawnSinceTick = false;
 
         Keep(yaw, (Lift ?? 0f) + raise);
@@ -648,6 +688,21 @@ internal sealed class ModernBody : IDisposable
         }
     }
 
+    /// <summary>Gets a value indicating whether a tick has posed him and no frame has skinned him since.</summary>
+    public bool NeedsSkin { get; private set; }
+
+    /// <summary>Skins him at his latest tick where no smoothed frame has, for the view about to draw him.</summary>
+    public void SkinIfStale()
+    {
+        if (NeedsSkin)
+        {
+            DrawAt(1f);
+        }
+    }
+
+    /// <summary>Leaves the body as it was for this frame: not wanted now, and no reason for the tick to skin him instead.</summary>
+    public void SkipFrame() => _drawnSinceTick = _worldNow.Length > 0;
+
     /// <summary>The first half of <see cref="DrawAt"/>: the blend and the skinning, which touch only this body and so run
     /// beside other bodies' on other threads.</summary>
     /// <returns>Whether there was a pose to skin.</returns>
@@ -659,6 +714,7 @@ internal sealed class ModernBody : IDisposable
         }
 
         _drawnSinceTick = true;
+        NeedsSkin = false;
 
         for (int node = 0; node < _worldNow.Length; node++)
         {
@@ -708,6 +764,8 @@ internal sealed class ModernBody : IDisposable
                 return null;
             }
 
+            SkinIfStale();
+
             Vector3f m = _vertices[muzzle].Position, s = _vertices[stock].Position;
             return (new Vector3(m.X, m.Y, m.Z), new Vector3(s.X, s.Y, s.Z));
         }
@@ -725,6 +783,7 @@ internal sealed class ModernBody : IDisposable
     /// <returns>Whether it met one.</returns>
     public bool TryMeet(Vector3 from, Vector3 to, out float along, out int part, out Vector3 normal)
     {
+        SkinIfStale();
         (along, part, normal) = (float.MaxValue, -1, Vector3.Zero);
         ushort[] indices = _asset.Indices;
         int[] parts = _asset.TriangleParts;

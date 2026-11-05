@@ -42,6 +42,12 @@ internal sealed class SoldierMember(SoldierAgent agent, MeshHandle mesh)
     /// <summary>Gets or sets the modern character drawn in this soldier's place, or <see langword="null"/> for his own model.</summary>
     public ModernBody? Modern { get; set; }
 
+    /// <summary>Gets or sets what his modern body fell as, once a ragdoll has taken over (<c>g_modern_ragdoll</c>).</summary>
+    public OpenIGI.Game.Igi1.Physics.RagdollBody? ModernCorpse { get; set; }
+
+    /// <summary>Gets or sets the round that killed him, and how far along the ground he was going a tick as it struck, in engine units.</summary>
+    public (OpenIGI.Game.Igi1.Ai.SoldierFall Fall, OpenIGI.Core.Numerics.Vector3d Going)? ModernFall { get; set; }
+
     /// <summary>What this soldier holds, or <see langword="null"/> when the level armed it with nothing.</summary>
     public SoldierHeldWeapon? Weapon { get; set; }
 

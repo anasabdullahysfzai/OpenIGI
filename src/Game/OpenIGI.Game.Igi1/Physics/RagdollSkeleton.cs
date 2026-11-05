@@ -238,6 +238,10 @@ public sealed class RagdollSkeleton
     /// carries; <see langword="null"/> falls back to a fraction of each bone's own length.
     /// </param>
     /// <param name="profile">Which bones to simulate and how; <see langword="null"/> picks <see cref="RagdollProfile.For"/>.</param>
+    /// <param name="measured">
+    /// For a character that is not a <see cref="MefModel"/>: each point of its skin with the bone that carries it, in the rig's rest
+    /// pose, to measure the shapes from as <paramref name="model"/> would be.
+    /// </param>
     /// <returns>The prepared rig.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="skeleton"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">The hierarchy cannot be resolved in one forward pass, or the profile does not fit it.</exception>
@@ -245,7 +249,8 @@ public sealed class RagdollSkeleton
         BoneSkeleton skeleton,
         RagdollLimits? limits = null,
         MefModel? model = null,
-        RagdollProfile? profile = null)
+        RagdollProfile? profile = null,
+        IReadOnlyList<(int Bone, Vector3f At)>? measured = null)
     {
         ArgumentNullException.ThrowIfNull(skeleton);
         if (!skeleton.IsTopologicallySorted())
@@ -302,7 +307,7 @@ public sealed class RagdollSkeleton
         }
 
         Vector3f[] restAt = RestPositions(skeleton);
-        RagdollBone[] shapes = Shapes(skeleton, profile, bodyBone, bodyOfBone, restAt, model);
+        RagdollBone[] shapes = Shapes(skeleton, profile, bodyBone, bodyOfBone, restAt, model, measured);
 
         return new RagdollSkeleton(
             skeleton,
@@ -421,13 +426,23 @@ public sealed class RagdollSkeleton
         int[] bodyBone,
         int[] bodyOfBone,
         Vector3f[] restAt,
-        MefModel? model)
+        MefModel? model,
+        IReadOnlyList<(int Bone, Vector3f At)>? measured = null)
     {
         int bodies = bodyBone.Length;
         List<Vector3f>[] clouds = new List<Vector3f>[bodies];
         for (int body = 0; body < bodies; body++)
         {
             clouds[body] = [];
+        }
+
+        if (measured is not null)
+        {
+            foreach ((int bone, Vector3f at) in measured)
+            {
+                int body = bodyOfBone[bone];
+                clouds[body].Add(at - restAt[bodyBone[body]]);
+            }
         }
 
         if (model is not null && MefSkinner.IsSkinned(model) && model.BaseVertexCount > 0)

@@ -32,6 +32,12 @@ internal sealed class SoldierWeaponDrawer(
 {
     private readonly List<SoldierGroup> _groups = groups;
 
+    /// <summary>Beyond this far from the eye, in metres, a modern body casts no shadow.</summary>
+    public const double ModernShadowBeyondMetres = 30.0;
+
+    /// <summary>How far from where he stands any part of a modern body can reach, in metres, rifle and a fall's sprawl included.</summary>
+    public const double ModernBodyRadiusMetres = 2.5;
+
     /// <summary>Gets or sets where the level's light is read from, or none to draw at the textures.</summary>
     public Func<FixedFunctionSun?>? Sun { get; set; }
 
@@ -116,6 +122,24 @@ internal sealed class SoldierWeaponDrawer(
                     continue;
                 }
 
+                // A modern body is heavy, and at this range its shadow is a few texels nobody reads: not in a light's view.
+                if (member.Modern is not null && Visibility is { } views && !views.IsEye(camera)
+                    && (member.DrawnWhere - camera.Position).Length > ModernShadowBeyondMetres)
+                {
+                    continue;
+                }
+
+                // Nor is one wholly behind the eye drawn in its view, whose geometry passes are paid by the triangle.
+                if (member.Modern is not null && Visibility is { } eyes && eyes.IsEye(camera))
+                {
+                    Vector3d toBody = member.DrawnWhere - camera.Position;
+                    Matrix3f look = camera.Orientation;
+                    if ((look.M31 * toBody.X) + (look.M32 * toBody.Y) + (look.M33 * toBody.Z) < -ModernBodyRadiusMetres)
+                    {
+                        continue;
+                    }
+                }
+
                 // Beyond its cutoff a body is not drawn at all, nor the gun in its hand.
                 int level = lod is null ? 0 : SoldierLevelOfDetail.Select(lod, group, member, camera, fieldOfView);
                 if (level < 0)
@@ -164,6 +188,8 @@ internal sealed class SoldierWeaponDrawer(
 
                 if (member.Modern is { Mesh.IsValid: true } modern)
                 {
+                    modern.SkinIfStale();
+
                     // The modern character in his place (g_modern_bodies): its own mesh and textures, at every distance. His
                     // rifle is part of it; a corpse has let it go (the game drops its own on the ground). Drawn with its own
                     // normal, roughness and metalness where it came with them, not as the original's matte body.

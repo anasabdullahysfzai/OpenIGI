@@ -44,6 +44,7 @@ public sealed class ModernBodyMissionTests(Xunit.Abstractions.ITestOutputHelper 
             foreach ((SoldierMember member, float lowest) in renderer.MembersForTesting.Where(m => !m.Member.Agent.View.IsDead).Take(5))
             {
                 Assert.NotNull(member.Modern);
+                member.Modern!.SkinIfStale(); // As the view about to draw him does: a tick only poses.
                 Vertex3D[] modern = device.Meshes[member.Modern!.Mesh.Id].Vertices;
                 string line = $"{member.Agent.View.Soldier.Id}: model's lowest {lowest:0.00} m | modern {Bounds(modern)} | lift {member.Modern.Lift}";
                 output.WriteLine(line);

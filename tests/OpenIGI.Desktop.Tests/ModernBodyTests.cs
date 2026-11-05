@@ -16,6 +16,56 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
     public static readonly string File = Environment.GetEnvironmentVariable("OPENIGI_MODERN_BODY")
         ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../../animations/gltf/swat_guy_game.glb"));
 
+    /// <summary>A pose handed to the ragdoll comes back the same, or the takeover would jump; and the rig has every body it should.</summary>
+    [RequiresModernBodyFact]
+    public void APoseGoesThroughTheRagdollAndComesBackTheSame()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        const double Units = 4096.0;
+        ModernRagdoll ragdoll = ModernRagdoll.Build(asset, Units) ?? throw new InvalidOperationException("no rig");
+        Assert.Equal(16, ragdoll.Rig.BodyCount);
+
+        // Measured from his skin, not guessed from his bones: a trunk the thickness of a guess sinks into the floor.
+        Assert.InRange(ragdoll.Rig.BodyAt(0).Radius / Units, 0.1, 0.25);
+        Assert.InRange(ragdoll.Rig.BodyAt(2).Radius / Units, 0.1, 0.25);
+        output.WriteLine($"bones {ragdoll.Rig.BoneCount}, mass {ragdoll.Rig.TotalMass:0.0} kg");
+        foreach ((RagdollBoneView body, int index) in ragdoll.Rig.Bodies.Select((b, i) => (new RagdollBoneView(b.HalfLength / Units, b.Radius / Units, 1.0 / b.InverseMass), i)))
+        {
+            output.WriteLine($"  {ragdoll.Rig.Profile.Bodies[index].Name}: half {body.Half:0.00} m, radius {body.Radius:0.00} m, {body.Mass:0.0} kg");
+        }
+
+        System.Numerics.Matrix4x4[] world = new System.Numerics.Matrix4x4[asset.Rest.Length];
+        System.Numerics.Matrix4x4[] skin = new System.Numerics.Matrix4x4[asset.Joints.Length];
+        asset.Pose(0.4f, 0f, 0f, world, skin);
+
+        OpenIGI.Core.Numerics.Vector3d where = new(100000.0, -50000.0, 7000.0);
+        OpenIGI.Core.Numerics.Matrix3f facing = OpenIGI.Core.Numerics.Matrix3f.FromEngineEulerAngles(0f, 0f, 1.1f);
+        OpenIGI.Game.Igi1.Physics.RagdollBody corpse = ragdoll.Seed(world, world, 0f, 0f, where, where, facing);
+        System.Numerics.Matrix4x4[] back = (System.Numerics.Matrix4x4[])world.Clone();
+        ragdoll.Write(corpse, where, facing, back);
+
+        double worstPlace = 0.0, worstTurn = 0.0;
+        for (int node = 0; node < world.Length; node++)
+        {
+            if (!asset.Names[node].StartsWith("mixamorig:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            worstPlace = Math.Max(worstPlace, System.Numerics.Vector3.Distance(world[node].Translation, back[node].Translation));
+            System.Numerics.Matrix4x4.Decompose(world[node], out _, out System.Numerics.Quaternion a, out _);
+            System.Numerics.Matrix4x4.Decompose(back[node], out _, out System.Numerics.Quaternion b, out _);
+            worstTurn = Math.Max(worstTurn, 1.0 - Math.Abs(System.Numerics.Quaternion.Dot(a, b)));
+        }
+
+        output.WriteLine($"worst place {worstPlace * 1000.0:0.0} mm, worst turn {worstTurn:0.000000}");
+        Assert.InRange(worstPlace, 0.0, 0.01);
+        Assert.InRange(worstTurn, 0.0, 0.001);
+    }
+
+    private readonly record struct RagdollBoneView(double Half, double Radius, double Mass);
+
     [RequiresModernBodyFact]
     public void TheCharacterReadsWholeWithBothClips()
     {
@@ -438,7 +488,8 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
             // Measured against the idle's, where the rifle was fitted: its line runs tip to tip, below the bore the hands hold.
             output.WriteLine($"{name}: left palm at most {worst:0.000} m off the rifle's tip-to-tip line");
             // Aiming, the rifle is raised and drawn back, and the left hand reached after it: no further off than at ease.
-            Assert.True(worst < 0.10f, $"{name}: the left hand comes {worst:0.00} m off the rifle");
+            // As frames draw him: the blend between ticks rebuilds each joint, a few millimetres off the tick's own pose.
+            Assert.True(worst < 0.105f, $"{name}: the left hand comes {worst:0.00} m off the rifle");
         }
     }
 

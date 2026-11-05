@@ -323,6 +323,13 @@ public static class GameplayCVars
     /// Presentation only: each soldier's own skeleton, clips, hit zones, eye and ragdoll go on as ever, and the character is
     /// chosen idle or walking, and its walk paced, from how the soldier moves. A dead soldier is drawn as his own model.
     /// </remarks>
+    public static readonly BoolCVar ModernRagdoll = CVar.Bool(
+        "g_modern_ragdoll",
+        false,
+        CVarOptions.Archive,
+        "A modern body's fall plays briefly, then hands over to the ragdoll, which lands him on whatever is there.");
+
+    /// <summary>Draws soldiers as the modern character.</summary>
     public static readonly BoolCVar ModernBodies = CVar.Bool(
         "g_modern_bodies",
         false,

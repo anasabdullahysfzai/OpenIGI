@@ -78,9 +78,26 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
         if (smooth)
         {
             _modern.Clear();
+            _frameNumber++;
+            int seen = 0;
             foreach (SoldierGroup group in _groups)
             {
-                _modern.AddRange(group.Soldiers.Select(m => m.Modern).OfType<ModernBody>());
+                foreach (SoldierMember member in group.Soldiers)
+                {
+                    if (member.Modern is { } body)
+                    {
+                        // Most soldiers are no use posed every frame: those behind the eye not at all, those far off now and then.
+                        // Each still takes his own tick's pose when he is next wanted, so nothing is lost.
+                        if (WantedThisFrame(member, seen++))
+                        {
+                            _modern.Add(body);
+                        }
+                        else
+                        {
+                            body.SkipFrame();
+                        }
+                    }
+                }
             }
 
             bool[] skinned = new bool[_modern.Count];
@@ -105,6 +122,39 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
             _logger.Information(SoldierRenderer.LogCategory + ".Frame", FormattableString.Invariant(
                 $"frame {frame:0.0} ms, alpha {alpha:0.00}, posing {posing:0.00} ms, {_groups.Sum(g => g.Soldiers.Count(m => m.Modern is not null))} modern bodies"));
         }
+    }
+
+    /// <summary>Gets or sets the eye the soldiers were last drawn from, or none yet.</summary>
+    public Func<OpenIGI.Core.Graphics.Camera3D?>? Eye { get; set; }
+
+    /// <summary>Beyond this, in metres, a soldier behind the eye is not posed; nearer, his shadow or a quick turn could show it.</summary>
+    public const double UnseenBeyondMetres = 12.0;
+
+    /// <summary>Beyond this, in metres, a soldier is posed one frame in <see cref="FarEveryFrames"/>.</summary>
+    public const double FarBeyondMetres = 40.0;
+
+    /// <inheritdoc cref="FarBeyondMetres"/>
+    public const int FarEveryFrames = 3;
+
+    private int _frameNumber;
+
+    private bool WantedThisFrame(SoldierMember member, int index)
+    {
+        if (Eye?.Invoke() is not { } eye || member.Agent.View.IsDead)
+        {
+            return true;
+        }
+
+        Vector3d offset = member.DrawnWhere - eye.Position;
+        double distance = offset.Length;
+        Matrix3f view = eye.Orientation;
+        double depth = (view.M31 * offset.X) + (view.M32 * offset.Y) + (view.M33 * offset.Z);
+        if (distance > UnseenBeyondMetres && depth < 0.0)
+        {
+            return false;
+        }
+
+        return distance <= FarBeyondMetres || (_frameNumber + index) % FarEveryFrames == 0;
     }
 
     /// <summary>Computes one soldier's drawn placement, pose blend and motion for this frame.</summary>

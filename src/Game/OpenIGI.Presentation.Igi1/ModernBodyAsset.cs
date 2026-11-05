@@ -368,6 +368,10 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <remarks>Named <c>death_front</c>, <c>death_back</c>, <c>death_front_head</c> and <c>death_back_head</c>; played once and held.</remarks>
     public ModernClip?[,] Deaths { get; private set; } = new ModernClip?[2, 2];
 
+    /// <summary>Gets the short falls the ragdoll finishes, by shot from behind then headshot, each null where the file has none.</summary>
+    /// <remarks>Named <c>death_short_front</c>, <c>death_short_back</c>, <c>death_short_front_head</c> and <c>death_short_back_head</c>.</remarks>
+    public ModernClip?[,] ShortDeaths { get; private set; } = new ModernClip?[2, 2];
+
     /// <summary>Gets the falls from a kneel, shot from the front and from behind; each null where the character has none.</summary>
     public ModernClip?[] KneelDeaths { get; private set; } = new ModernClip?[2];
 
@@ -552,6 +556,11 @@ internal sealed class ModernBodyAsset : IDisposable
             model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
                 ? ModernClip.ReadFall(clip, index, asset.Rest.Length, up)
                 : null;
+        foreach ((int side, int head, string name) in new[] { (0, 0, "death_short_front"), (1, 0, "death_short_back"), (0, 1, "death_short_front_head"), (1, 1, "death_short_back_head") })
+        {
+            asset.ShortDeaths[side, head] = Fall(name);
+        }
+
         asset.KneelDeaths = [Fall("death_kneel_front"), Fall("death_kneel_back")];
         asset.KneelHeadDeath = Fall("death_kneel_head");
 
@@ -902,6 +911,9 @@ internal sealed class ModernBodyAsset : IDisposable
         LowestY = Vertices.Min(v => v.Position.Y);
     }
 
+    /// <summary>The smoothest any part of a character's body is drawn.</summary>
+    public const float LeastBodyRoughness = 0.5f;
+
     // The material's own normal map and metal-roughness, packed as the renderer reads an authored detail map -- the normal's x
     // and y (y flipped: glTF's points up the image, the renderer's tangent frame down it), the roughness, the metalness -- and
     // attached to its colour texture. Nothing attached for a material with neither.
@@ -924,13 +936,16 @@ internal sealed class ModernBodyAsset : IDisposable
         Vector2 factors = new(Factor("Metallic", 0f), Factor("Roughness", 1f));
         ImageResult size = normal ?? surface!;
         int width = size.Width, height = size.Height;
+
+        // His cloth and gear, not his rifle: painted glints that read as chrome under the modern path's sun and sky.
+        float least = material.Name?.Contains("Rifle", StringComparison.OrdinalIgnoreCase) == true ? 0f : LeastBodyRoughness;
         Bgra32[] packed = new Bgra32[width * height];
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
                 (byte nx, byte ny) = normal is null ? ((byte)128, (byte)128) : (Texel(normal, x, y, width, height, 0), Texel(normal, x, y, width, height, 1));
-                float roughness = factors.Y * (surface is null ? 1f : Texel(surface, x, y, width, height, 1) / 255f);
+                float roughness = Math.Max(least, factors.Y * (surface is null ? 1f : Texel(surface, x, y, width, height, 1) / 255f));
                 float metalness = factors.X * (surface is null ? 1f : Texel(surface, x, y, width, height, 2) / 255f);
                 packed[(y * width) + x] = Bgra32.FromRgba(nx, (byte)(255 - ny), (byte)Math.Clamp(roughness * 255f, 0f, 255f), (byte)Math.Clamp(metalness * 255f, 0f, 255f));
             }

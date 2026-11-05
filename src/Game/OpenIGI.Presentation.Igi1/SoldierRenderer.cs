@@ -170,6 +170,7 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
         _hits = new SoldierHitTesting(_groups, _sim, _frames, _logger);
         _armoury = new SoldierArmoury(_groups, _sim, _meshes, _logger);
         _drawer = new SoldierWeaponDrawer(_groups, _device, _armoury, _frames, () => Textures, _logger);
+        _frames.Eye = () => _drawer.LastEye;
         _playerBody = new PlayerBodyRenderer(this, _device, _sim, _logger);
         _sim.SpawnedBody = (generator, roster, fresh, dead) =>
         {
@@ -224,6 +225,8 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
                 return;
             }
 
+            Vector3d going = member.TickWhere - member.PrevTickWhere;
+            member.ModernFall = (fall, new Vector3d(going.X, going.Y, 0.0) * WorldScene.UnitsPerMetre);
             member.Ragdoll = SeedRagdoll(
                 fall.View,
                 fall.Origin,

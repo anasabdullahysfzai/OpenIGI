@@ -192,6 +192,21 @@ public static class HumanRagdollProfile
             isHuman: true);
     }
 
+    /// <summary>The same bodies and joints on another skeleton, whose bones are in the same axes (x right, y ahead, z up).</summary>
+    /// <param name="boneOf">Which of its bones plays each bone of this rig that has a body.</param>
+    /// <param name="names">A name for every bone of it.</param>
+    /// <returns>The profile.</returns>
+    public static RagdollProfile Remapped(IReadOnlyDictionary<int, int> boneOf, IReadOnlyList<string> names)
+    {
+        ArgumentNullException.ThrowIfNull(boneOf);
+        RagdollProfile human = Create();
+        return new RagdollProfile(
+            [.. human.Bodies.Select(body => body with { Bone = boneOf[body.Bone] })],
+            [.. human.Joints.Select(joint => joint.CoupledKnee < 0 ? joint : joint with { CoupledKnee = boneOf[joint.CoupledKnee] })],
+            names,
+            isHuman: false);
+    }
+
     private static float Radians(float degrees) => degrees * MathF.PI / 180f;
 
     private static RagdollJointSpec Ball(float swing, float twist) =>

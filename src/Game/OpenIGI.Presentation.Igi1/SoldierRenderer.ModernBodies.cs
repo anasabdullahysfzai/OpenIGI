@@ -2,7 +2,9 @@ using OpenIGI.Core.Diagnostics;
 using OpenIGI.Core.Graphics;
 using OpenIGI.Game;
 using OpenIGI.Game.Igi1.Ai;
+using OpenIGI.Game.Igi1.Physics;
 using OpenIGI.Game.Igi1.Player;
+using OpenIGI.Game.Weapons;
 using OpenIGI.Game.Player;
 using OpenIGI.Game.World;
 using OpenIGI.Core.Numerics;
@@ -65,6 +67,11 @@ public sealed partial class SoldierRenderer
         }
 
         ModernBody body = member.Modern;
+        if (view.IsDead && GameplayCVars.ModernRagdoll.Value && TickModernCorpse(member, body, asset, view))
+        {
+            return;
+        }
+
         if (forced.Length > 0 && !view.IsDead)
         {
             TakeHit(member, body, asset, view);
@@ -377,16 +384,31 @@ public sealed partial class SoldierRenderer
     // The fall the killing shot calls for, started on the body he died in; false where there is none to play.
     private bool StartFall(SoldierMember member, ModernBodyAsset asset, SoldierView view)
     {
-        if (member.Modern is not { } body || asset.Death(view.KillShot.FromBehind, view.KillShot.Headshot, body.Kneeling) is not { } fall)
+        if (member.Modern is not { } body || ModernFallFor(member, asset, view, body) is not { } fall)
         {
             return false;
         }
 
         // The height he was drawn at standing, from the tick before: this tick's may already be his death clip's.
         _modernFallHeights[member] = _modernStandingHeights.GetValueOrDefault(member, member.TickWhere.Z);
-        body.Fall(fall);
+        body.Fall(fall, brief: ReferenceEquals(fall, asset.ShortDeaths[view.KillShot.FromBehind ? 1 : 0, view.KillShot.Headshot ? 1 : 0]));
         return true;
     }
+
+    // The fall a kill plays: with the ragdoll on, a short one for a man standing, which physics finishes. Not for a kneel, whose
+    // falls are their own; not for a man running, who carries on into the fall from the run; not for a blast, which throws him at once.
+    private static ModernClip? ModernFallFor(SoldierMember member, ModernBodyAsset asset, SoldierView view, ModernBody body)
+    {
+        int side = view.KillShot.FromBehind ? 1 : 0, head = view.KillShot.Headshot ? 1 : 0;
+        bool standing = !body.Kneeling && !IsBlast(member) && CarriedMetresPerSecond(member) <= RagdollRunningMetresPerSecond;
+        return GameplayCVars.ModernRagdoll.Value && standing && asset.ShortDeaths[side, head] is { } brief
+            ? brief
+            : asset.Death(view.KillShot.FromBehind, view.KillShot.Headshot, body.Kneeling);
+    }
+
+    private static bool IsBlast(SoldierMember member) => member.ModernFall?.Fall.Category is WeaponCategory.Grenade or WeaponCategory.ProximityMine;
+
+    private static double CarriedMetresPerSecond(SoldierMember member) => (member.ModernFall?.Going.Length ?? 0.0) / WorldScene.UnitsPerMetre * 30.0;
 
     // The character, read the first time it is wanted and again whenever the file named changes; null while off or unreadable.
     private ModernBodyAsset? ModernAsset()
@@ -436,6 +458,88 @@ public sealed partial class SoldierRenderer
     {
         member.Modern?.Dispose();
         member.Modern = null;
+        member.ModernCorpse = null;
+        member.ModernFall = null;
+    }
+
+    /// <summary>How long a fall plays before the ragdoll takes it over, in seconds: a moment, or less for a man at a run, who would stop dead.</summary>
+    public const float RagdollAfterSeconds = 0.25f, RagdollAfterRunningSeconds = 0.1f;
+
+    /// <summary>Above this speed, in metres a second, a man shot dead counts as running.</summary>
+    public const double RagdollRunningMetresPerSecond = 2.0;
+
+    private ModernRagdoll? _modernRagdoll;
+    private ModernBodyAsset? _modernRagdollOf;
+
+    // The dead body's tick once its fall has played a moment: the ragdoll takes over from the skeleton on screen. False while the clip
+    // still has him, or where there is no ragdoll for him.
+    private bool TickModernCorpse(SoldierMember member, ModernBody body, ModernBodyAsset asset, SoldierView view)
+    {
+        double units = WorldScene.UnitsPerMetre;
+        Vector3d where = member.TickWhere * units;
+        if (member.ModernCorpse is null)
+        {
+            // A blast throws him at once; a run carries on into the fall; anything else plays its clip a moment first.
+            bool blast = IsBlast(member);
+            double speed = CarriedMetresPerSecond(member);
+
+            // A short fall runs to its end, where it is going at the speed physics carries on from; and its own motion is the round's.
+            bool brief = body.FallIsBrief;
+            float after = blast ? 0f : speed > RagdollRunningMetresPerSecond ? RagdollAfterRunningSeconds : brief ? body.FallDuration : RagdollAfterSeconds;
+            if (!body.Fallen || body.FallTime < after || body.Kept.Now.Length == 0)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(_modernRagdollOf, asset))
+            {
+                (_modernRagdollOf, _modernRagdoll) = (asset, ModernRagdoll.Build(asset, units));
+            }
+
+            if (_modernRagdoll is null)
+            {
+                return false;
+            }
+
+            (System.Numerics.Matrix4x4[] now, System.Numerics.Matrix4x4[] before, float lift, float liftBefore) = body.Kept;
+            RagdollBody seeded = _modernRagdoll.Seed(now, before, lift, liftBefore, where, member.PrevTickWhere * units, member.TickOrientation);
+            if (member.ModernFall is var (fall, going))
+            {
+                // The way he was going, and the round that killed him.
+                seeded.AddVelocity(going);
+                if (!brief)
+                {
+                    RagdollImpulse.Apply(seeded, -1, fall.Travel, RagdollImpulse.MomentumOf(_modernRagdoll.Rig, fall.Category, GameplayCVars.RagdollForce.Value), blast, blast ? null : fall.Struck);
+                }
+            }
+
+            member.ModernCorpse = seeded;
+            _logger.Information(LogCategory + ".Corpse", FormattableString.Invariant($"soldier {view.Soldier.Id}: the ragdoll takes over at {body.FallTime:0.00} s, going {speed:0.0} m/s, {member.ModernFall?.Fall.Category}."));
+        }
+
+        if (member.ModernCorpse is not { } corpse || _modernRagdoll is not { } ragdoll)
+        {
+            return false;
+        }
+
+        bool wasResting = corpse.IsAtRest;
+        corpse.Step(_sim.RagdollWorldForCorpses(), GameplayCVars.RagdollSubsteps.Value, GameplayCVars.RagdollGravity.Value, null, SoldierFrameInterpolator.MuscleTicks());
+        if (!corpse.IsValid)
+        {
+            member.ModernCorpse = null;
+            _logger.Warning(LogCategory + ".Corpse", $"soldier {view.Soldier.Id}: the ragdoll left the level; the fall's clip has him.");
+            return false;
+        }
+
+        body.TickPosed(world => ragdoll.Write(corpse, where, member.TickOrientation, world), GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f);
+        if (corpse.IsAtRest && !wasResting)
+        {
+            double standing = _modernFallHeights.GetValueOrDefault(member, member.TickWhere.Z);
+            _logger.Information(LogCategory + ".Corpse", FormattableString.Invariant(
+                $"soldier {view.Soldier.Id}: at rest after {corpse.Age / 30.0:0.0} s, lowest of him {member.TickWhere.Z + body.LowestSkinned - standing - body.Floor:0.00} m from the floor he stood on."));
+        }
+
+        return true;
     }
 
     // Every soldier's modern body, and the character they were made from.
