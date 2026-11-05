@@ -503,6 +503,7 @@ public sealed partial class Igi1HumanAi
         // idleness and handed back to the patrol. Nothing is pending with the modern AI off.
         InvestigatePending();
         ContinueSearch();
+        KeepPost();
         if (!_pendingActions.HasPending)
         {
             Events.Post(AiEventRecord.Simple(AiEvent.Idle), owner: 0, worldTests: null);

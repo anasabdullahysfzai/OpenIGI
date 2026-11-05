@@ -172,6 +172,7 @@ public sealed partial class Igi1HumanAi
 
         _searching = false;
         _onEdgeUntilTick = _lastTick + OnEdgeTicks;
+        _walksBack = HoldsPost;
         ModernLog?.Invoke("search over; back to patrol, on edge");
         Say("clear");
     }

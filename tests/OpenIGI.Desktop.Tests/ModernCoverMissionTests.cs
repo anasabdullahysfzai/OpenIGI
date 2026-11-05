@@ -49,6 +49,86 @@ public sealed class ModernCoverMissionTests(Xunit.Abstractions.ITestOutputHelper
         }
     }
 
+    /// <summary>A mission's own guards fight within their leash and, once it is over, go back to their patrols or their posts.</summary>
+    [RequiresGameDataTheory]
+    [InlineData(1)]
+    [InlineData(12)]
+    [InlineData(14)]
+    public void AMissionGuardKeepsToHisPostAndGoesBackAfterAFight(int mission)
+    {
+        bool previous = GameplayCVars.ModernAi.Value;
+        GameplayCVars.ModernAi.Value = true;
+        try
+        {
+            using SoldierRendererScenario scenario = SoldierRendererScenario.CreateScenario(prepareContainers: true, missionNumber: mission, combatRows: true);
+            for (int tick = 0; tick < 10; tick++)
+            {
+                scenario.Renderer.Tick();
+            }
+
+            int fought = 0, moved = 0;
+            foreach (Igi1HumanAi guard in scenario.Renderer.Simulation.BrainsForTesting.Where(b => b.PlayerIsEnemy && b.HasGraph && b.Arm == AiCombatArm.Guard))
+            {
+                // One parked off the level until he is called on is not at a post.
+                Vector3d from = guard.Position;
+                if (guard.NodePositionForTesting(guard.RouteForTesting.Current) is not { } node || Vector3d.Distance(from, node) > 60.0 * Metre)
+                {
+                    continue;
+                }
+
+                Matrix3f eye = guard.CurrentEyeOrientation;
+                double length = Math.Max(0.001, Math.Sqrt((eye.M12 * eye.M12) + (eye.M22 * eye.M22)));
+                Vector3d feet = new(from.X + (eye.M12 / length * 10.0 * Metre), from.Y + (eye.M22 / length * 10.0 * Metre), from.Z);
+                Vector3d gone = from + new Vector3d(0, 0, -300.0 * Metre);
+                List<string> story = [];
+                guard.ModernLog = text => story.Add(text);
+                bool fights = false, inFight = false;
+                double furthest = 0.0;
+                double? cameBack = null;
+                int over = 0;
+                for (int tick = 1; tick <= 120 * 30; tick++)
+                {
+                    Vector3d at = tick < 30 * 30 ? feet : gone;
+                    double stride = guard.WalksForward ? (guard.Activity == AiSoldierActivity.Engaging ? 0.11 : 0.04) * Metre : 0.0;
+                    guard.Tick(tick, at + new Vector3d(0, 0, 1.6 * Metre), rootMotionThisTick: stride, enemyFeet: at);
+                    guard.StepBodyAfterClip(stride, 0.0);
+                    inFight = guard.Activity == AiSoldierActivity.Engaging;
+                    fights |= inFight;
+                    if (inFight && guard.HasModernFightForTesting)
+                    {
+                        Vector3d leash = guard.FightPostForTesting;
+                        furthest = Math.Max(furthest, Math.Sqrt(Math.Pow(guard.Position.X - leash.X, 2) + Math.Pow(guard.Position.Y - leash.Y, 2)) / Metre);
+                    }
+
+                    // Where the walk back, if he needed one, left him, before his patrol takes him on.
+                    over = fights && !inFight ? over + 1 : 0;
+                    if (cameBack is null && over > 5 && guard.RunningAction is not ("MoveToEvent" or "LookAtEvent" or "Combat"))
+                    {
+                        cameBack = Vector3d.Distance(guard.FightPostForTesting, guard.Position) / Metre;
+                    }
+                }
+
+                moved += story.Any(s => s.Contains("takes a position", StringComparison.Ordinal) || s.Contains("flanks to", StringComparison.Ordinal) || s.Contains("advances", StringComparison.Ordinal)) ? 1 : 0;
+                output.WriteLine($"guard {guard.GuardId}: fought {fights}, furthest in the fight {furthest:0.0} m, came back to {cameBack:0.0} m of his post, now {guard.RunningAction ?? "nothing"}");
+                if (fights)
+                {
+                    fought++;
+                    Assert.False(inFight, $"guard {guard.GuardId} was still fighting long after the man had gone");
+                    Assert.True(furthest <= Igi1HumanAi.PostLeashMetres + 3.0, $"guard {guard.GuardId} fought {furthest:0.0} m from his post");
+                    Assert.True(cameBack < 3.0, $"guard {guard.GuardId} came back only to {cameBack:0.0} m of his post");
+                }
+            }
+
+            output.WriteLine($"mission {mission}: {fought} fought, {moved} moved");
+            Assert.True(fought > 0, "no guard fought");
+            Assert.True(moved > 0, "no guard moved in his fight");
+        }
+        finally
+        {
+            GameplayCVars.ModernAi.Value = previous;
+        }
+    }
+
     // The player ten metres ahead of the guard where the guard can see him; fight, a round in him, and what he does.
     private static string? Attempt(Igi1HumanAi guard, List<string> tried)
     {

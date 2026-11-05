@@ -411,6 +411,10 @@ public sealed partial class Igi1HumanAi
         if (GameplayCVars.ModernAi.Value && _combatInstalled)
         {
             _onEdgeUntilTick = _lastTick + OnEdgeTicks;
+            _walksBack = HoldsPost;
+
+            // Nor does a guard take up a walk the fight interrupted: its search would lead him off his post.
+            _investigationWalked &= !HoldsPost;
         }
 
         _combatInstalled = false;
@@ -537,6 +541,12 @@ public sealed partial class Igi1HumanAi
         if (_patrol is not null)
         {
             FightAsPatrol(tick, enemy);
+            return;
+        }
+
+        // The modern AI: a guard fights as a patrol does, held to his post (Igi1HumanAi.Tactics).
+        if (HoldsPost && FightModern(tick, enemy))
+        {
             return;
         }
 

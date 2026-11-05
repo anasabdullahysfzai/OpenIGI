@@ -160,7 +160,7 @@ internal sealed class ModernArena
     /// figures (mission one's Hard row by default), sight that the walls block, and his decisions to the log given.
     /// </summary>
     /// <param name="missionTask">A mission-one soldier's own AI script to run first (its task id), or null for the archetype's alone.</param>
-    public Igi1HumanAi Patrol(Vector3d feet, float facing, Action<string> log, int? missionTask = null, int seed = 1)
+    public Igi1HumanAi Patrol(Vector3d feet, float facing, Action<string> log, int? missionTask = null, int seed = 1, AiType type = AiType.PatrolAk, string archetype = "patrol")
     {
         GraphFile graph = Graph ?? Build();
         Igi1HumanAi soldier = new(graph, feet, facing, phase: seed & 3, seed: seed) { StepsBodyAfterClip = true, RuntimeId = seed };
@@ -172,7 +172,7 @@ internal sealed class ModernArena
         soldier.SetNodeOccupancy(new AiNodeOccupancy());
         soldier.ModernLog = log;
         soldier.SetCombat(
-            AiType.PatrolAk,
+            type,
             new AiCombatParameters(new HumanAiConfigItemTask
             {
                 AiTypeName = "AITYPE_PATROL_AK",
@@ -194,7 +194,7 @@ internal sealed class ModernArena
         natives.RegisterConstant("GAME_FREQUENCY", 30);
         natives.RegisterRealConstant("WORLD_METER", Metre);
         natives.RegisterRealConstant("MATH_PI", Math.PI);
-        QvmProgram patrol = Archetype("patrol");
+        QvmProgram patrol = Archetype(archetype);
         if (missionTask is int task)
         {
             soldier.SetScript(new AiScriptHost(natives), Read(Path.Combine(GameData.RequireRoot(), "missions", "location0", "level1", "ai", $"{task}.qvm")), patrol);

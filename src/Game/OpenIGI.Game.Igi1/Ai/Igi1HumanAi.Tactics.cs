@@ -194,7 +194,7 @@ public sealed partial class Igi1HumanAi
     /// <returns>Whether the modern fight owns the tick.</returns>
     private bool FightModern(int tick, Vector3d enemy)
     {
-        if (!GameplayCVars.ModernAi.Value || Arm != AiCombatArm.Patrol || _graph is null || _graph.InParentFrame || _sight is null)
+        if (!GameplayCVars.ModernAi.Value || (Arm != AiCombatArm.Patrol && !HoldsPost) || _graph is null || _graph.InParentFrame || _sight is null)
         {
             return false;
         }
@@ -215,6 +215,57 @@ public sealed partial class Igi1HumanAi
     }
 
     private string _handing = string.Empty;
+
+    /// <summary>How far from his post a guard fights, in metres, and how far above or below it: a guard on a tower stays on it.</summary>
+    public const double PostLeashMetres = 12.0, PostClimbMetres = 2.5;
+
+    // Nearer his post than this, in metres, he is at it.
+    private const double AtPostMetres = 1.5;
+
+    // Where a guard was last on duty, and which way he faced: where the level put him, then wherever his patrol has him, until
+    // a walk to look at something or a fight takes him off it. His fight is held to it, and he goes back to it after.
+    private Vector3d _post;
+    private float _postFacing;
+    private bool _walksBack;
+
+    /// <summary>Gets whether he is a guard the modern fight holds to a post: not a sniper or Priboi, who keep the original's stand.</summary>
+    private bool HoldsPost => GameplayCVars.ModernAi.Value && Arm == AiCombatArm.Guard && _type is not (AiType.Sniper or AiType.Priboi) && _graph is { InParentFrame: false };
+
+    /// <summary>Gets the place his fight is held to, for testing.</summary>
+    internal Vector3d FightPostForTesting => _post;
+
+    /// <summary>Gets whether the modern fight has him, for testing.</summary>
+    internal bool HasModernFightForTesting => _tactic != TacticPhase.None;
+
+    private bool WithinLeash(Vector3d place) =>
+        !HoldsPost || (Flat(place, _post) <= PostLeashMetres * GraphNode.MetreInUnits && Math.Abs(place.Z - _post.Z) <= PostClimbMetres * GraphNode.MetreInUnits);
+
+    // Once a tick out of a fight: on duty, his post goes with him; taken off it and now done, he walks back, and his patrol takes him on.
+    private void KeepPost()
+    {
+        if (!HoldsPost || _combatInstalled || _searching || Activity == AiSoldierActivity.Dead)
+        {
+            return;
+        }
+
+        if (!_walksBack && RunningAction == "Patrol")
+        {
+            (_post, _postFacing) = (Position, Facing);
+        }
+
+        if (!_walksBack || RunningAction is not (null or "Idle" or "Patrol"))
+        {
+            return;
+        }
+
+        _walksBack = false;
+        if (Flat(Position, _post) > AtPostMetres * GraphNode.MetreInUnits)
+        {
+            Vector3d ahead = new(_post.X - (Math.Sin(_postFacing) * 5.0 * GraphNode.MetreInUnits), _post.Y + (Math.Cos(_postFacing) * 5.0 * GraphNode.MetreInUnits), _post.Z);
+            Install(_post, walk: true, lookSeconds: 2f, lookAt: ahead);
+            ModernLog?.Invoke("walks back to his post");
+        }
+    }
 
     private bool FightModernTick(int tick, Vector3d enemy)
     {
@@ -270,7 +321,7 @@ public sealed partial class Igi1HumanAi
         if (tick - _lastSeenTick > GiveUpTicks)
         {
             _gaveUpTick = tick;
-            _huntPlace = _lastKnown;
+            _huntPlace = HoldsPost ? null : _lastKnown;
             EndCombat();
             return true;
         }
@@ -461,7 +512,8 @@ public sealed partial class Igi1HumanAi
     {
         // The player gone from view behind cover a while, near enough: a grenade to bring him out, one in the squad at a time.
         double reach = Flat(Position, target) / GraphNode.MetreInUnits;
-        if (!seen && HasGrenade && _combat!.Phase == AiCombatPhase.Stand && CombatState == HumanSoldierStates.StandState
+        // The throw is the patrol arm's own one-shot, so a guard, who has none, does not.
+        if (!seen && HasGrenade && _patrol is not null && _combat!.Phase == AiCombatPhase.Stand && CombatState == HumanSoldierStates.StandState
             && tick - _lastSeenTick > GrenadeUnseenTicks && reach is >= GrenadeNearestMetres and <= GrenadeFurthestMetres
             && tick - (_squad?.GrenadeTick ?? int.MinValue / 2) > GrenadeSquadTicks)
         {
@@ -785,6 +837,7 @@ public sealed partial class Igi1HumanAi
             double away = Vector3d.Distance(Position, node.Position);
             double range = Flat(node.Position, target);
             if (away > reach || range < ClosestRangeMetres * metre || node.Id == notHere || (notHere >= 0 && node.Id == standing) || (node.Criteria & GraphNodeCriteria.View) != 0
+                || !WithinLeash(node.Position)
                 || _seenDownUntil.GetValueOrDefault(node.Id, -1) > _lastTick
                 || (_occupancy is not null && !_occupancy.IsClaimedBy(_graph, node.Id, this) && _occupancy.IsFull(_graph, node.Id)))
             {
@@ -884,6 +937,7 @@ public sealed partial class Igi1HumanAi
         {
             double away = Vector3d.Distance(Position, node.Position);
             if (away >= bestAway || node.Id == CurrentNode || (node.Criteria & GraphNodeCriteria.View) != 0
+                || !WithinLeash(node.Position)
                 || _seenDownUntil.GetValueOrDefault(node.Id, -1) > _lastTick
                 || (_occupancy is not null && !_occupancy.IsClaimedBy(_graph, node.Id, this) && _occupancy.IsFull(_graph, node.Id)))
             {
@@ -915,7 +969,7 @@ public sealed partial class Igi1HumanAi
         {
             double range = Flat(node.Position, target);
             double away = Vector3d.Distance(Position, node.Position);
-            if (node.Id == CurrentNode || away < 2.5 * metre || away > PositionReachMetres * metre || (node.Criteria & GraphNodeCriteria.View) != 0)
+            if (node.Id == CurrentNode || away < 2.5 * metre || away > PositionReachMetres * metre || (node.Criteria & GraphNodeCriteria.View) != 0 || !WithinLeash(node.Position))
             {
                 continue;
             }

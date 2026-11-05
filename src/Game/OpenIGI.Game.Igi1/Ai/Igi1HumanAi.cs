@@ -190,6 +190,7 @@ public sealed partial class Igi1HumanAi
         _graph = graph;
         Position = position;
         Facing = facing;
+        (_post, _postFacing) = (position, facing);
         _random = random ?? new IgiRandom(unchecked((uint)seed));
 
         // The intervals are NOT the ctor's zeroes: the AI's init handler (sub_4505D0, the same pass that
