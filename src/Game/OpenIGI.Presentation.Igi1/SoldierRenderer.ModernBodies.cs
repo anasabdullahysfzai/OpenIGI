@@ -171,7 +171,9 @@ public sealed partial class SoldierRenderer
                 : (fighter.TargetFeet / WorldScene.UnitsPerMetre) + new Vector3d(0, 0, 1.5);
             Vector3d from = member.TickWhere + new Vector3d(0, 0, 1.55);
             double lx = at.X - from.X, ly = at.Y - from.Y, f = fighter.Facing;
-            look = new Vector3((float)((lx * Math.Cos(f)) + (ly * Math.Sin(f))), (float)((-lx * Math.Sin(f)) + (ly * Math.Cos(f))), (float)(at.Z - from.Z));
+
+            // With the free camera up the player has no place, and his aim point reads as the world's origin: nothing to bend to.
+            look = (lx * lx) + (ly * ly) > 1000.0 * 1000.0 ? default : new Vector3((float)((lx * Math.Cos(f)) + (ly * Math.Sin(f))), (float)((-lx * Math.Sin(f)) + (ly * Math.Cos(f))), (float)(at.Z - from.Z));
         }
         else if (fighter?.PatrolGlance is { } glance)
         {
@@ -213,7 +215,8 @@ public sealed partial class SoldierRenderer
         }
 
         body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming || ready, member.Agent.ShotSequence, kneeling, keepsDown, turning,
-            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false, limp: fighter?.LimpLeg ?? 0, lean: fighter?.LeanSide ?? 0);
+            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false, limp: fighter?.LimpLeg ?? 0, lean: fighter?.LeanSide ?? 0,
+            runs: fighter?.GoesAtRun ?? false, wayLeft: (float)(fighter?.WayLeftMetres ?? 0.0));
         if (GameplayCVars.BodyLog.Value >= 0 && GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(

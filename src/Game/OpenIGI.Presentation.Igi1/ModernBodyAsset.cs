@@ -364,6 +364,12 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the stagger of a man blinded by a flashbang, played once (<c>flash_stagger</c>), or none where the file has none.</summary>
     public ModernClip FlashStagger { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets how many metres go to one of the run's units of root travel.</summary>
+    public float RunMetresPerTravel => Run.Travel.Length() > 0f ? Run.MetresPerSecond * Run.Duration / Run.Travel.Length() : 1f;
+
+    /// <summary>Where in the run's stride a run start meets it, and where each stop leaves it, as a share of the stride.</summary>
+    public const float RunStartMeets = 0.864f, RunStopLeftFrom = 0.273f, RunStopRightFrom = 0.818f;
+
     /// <summary>Gets the setting off into a run, and the stops from one planting either foot, played once, or none where the file has none.</summary>
     public ModernClip RunStart { get; private set; } = ModernClip.None;
 
@@ -615,6 +621,7 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.RunStart = Fall("run_start") ?? ModernClip.None;
         asset.RunStopLeft = Fall("run_stop_left") ?? ModernClip.None;
         asset.RunStopRight = Fall("run_stop_right") ?? ModernClip.None;
+        (asset._names[asset.RunStart], asset._names[asset.RunStopLeft], asset._names[asset.RunStopRight]) = ("run_start", "run_stop_left", "run_stop_right");
         foreach ((int side, int head, string name) in new[] { (0, 0, "death_short_front"), (1, 0, "death_short_back"), (0, 1, "death_short_front_head"), (1, 1, "death_short_back_head") })
         {
             asset.ShortDeaths[side, head] = Fall(name);

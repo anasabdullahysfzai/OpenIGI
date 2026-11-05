@@ -244,6 +244,12 @@ public sealed partial class Igi1HumanAi
     // The modern AI's pace now, in metres a second, eased toward the one wanted.
     private double _modernPace;
 
+    /// <summary>Gets whether he is setting out at or keeping up a run, whatever his pace yet: what a body starts its run for.</summary>
+    public bool GoesAtRun { get; private set; }
+
+    /// <summary>Gets how far is left of his walk, in metres: what a body sets off and stops by.</summary>
+    public double WayLeftMetres => _route.Count > 0 ? RouteLeftUnits() / GraphNode.MetreInUnits : 0.0;
+
     // How far is left of his walk along its waypoints, in world units.
     private double RouteLeftUnits()
     {
@@ -317,6 +323,7 @@ public sealed partial class Igi1HumanAi
         {
             double original = step / GraphNode.MetreInUnits * AiCombatParameters.TicksPerSecond;
             double wanted = style?.MetresPerSecond ?? (original > ModernRunAbove ? ModernRunMetresPerSecond : OwnWalkPace);
+            GoesAtRun = style is null && wanted >= ModernRunMetresPerSecond;
 
             if (LimpLeg != 0)
             {
@@ -348,6 +355,7 @@ public sealed partial class Igi1HumanAi
         {
             // Stopped: the next walk gathers pace from rest.
             _modernPace = 0.0;
+            GoesAtRun = false;
         }
 
         double x = Position.X + world.X;

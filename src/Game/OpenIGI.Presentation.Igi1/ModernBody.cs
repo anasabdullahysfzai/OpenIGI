@@ -350,6 +350,8 @@ internal sealed class ModernBody : IDisposable
     /// <param name="scanning">Whether, kneeling, he looks about him, rifle up.</param>
     /// <param name="limp">The leg he limps on: -1 his left, 1 his right, 0 neither.</param>
     /// <param name="lean">Which way he leans out from cover: 1 to his right, -1 to his left, 0 not at all.</param>
+    /// <param name="runs">Whether he is setting out at or keeping up a run.</param>
+    /// <param name="wayLeft">How far is left of his walk, in metres.</param>
     /// <param name="kneeling">Whether he kneels: down out of sight, or with his rifle up when he is also aiming.</param>
     /// <param name="keepsDown">Whether he kneels to hide, his rifle lowered whatever the fight.</param>
     /// <param name="turning">How fast he turns about up, in radians a second, left positive.</param>
@@ -359,7 +361,7 @@ internal sealed class ModernBody : IDisposable
     /// <param name="look">Where he looks, in the soldier's frame (x right, y ahead, z up), from his eyes; zero for nowhere in
     /// particular. Aiming, his upper body bends to it; always, his head turns to it.</param>
     public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0, bool kneeling = false, bool keepsDown = false, float turning = 0f,
-        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default, bool searching = false, bool scanning = false, int limp = 0, int lean = 0)
+        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default, bool searching = false, bool scanning = false, int limp = 0, int lean = 0, bool runs = false, float wayLeft = 0f)
     {
         if (_fall is { } fall)
         {
@@ -390,6 +392,7 @@ internal sealed class ModernBody : IDisposable
         }
 
         Kneeling = kneeling;
+        bool wasStill = Speed < StandingBelow;
         Speed = moved / TickSeconds;
         bool moving = Speed >= StandingBelow;
         // His legs come in as fast as he does: the soldier is at full speed the tick he sets off, and a quarter second of
@@ -406,6 +409,8 @@ internal sealed class ModernBody : IDisposable
 
         _firingFor = Math.Max(0f, _firingFor - TickSeconds);
         _running = moving && (limp != 0 ? Speed > LimpRunAbove : _running ? Speed > RunBelow : Speed > RunAbove);
+        bool shot = _firingFor >= FireSeconds - TickSeconds;
+        TickRunClip(moving, wasStill, runs, wayLeft, shot, kneeling || crouched || limp != 0 || lean != 0 || heading != Vector2.Zero);
         ModernClip stand = kneeling && scanning && _firingFor <= 0f ? _asset.KneelScan
             : kneeling ? (!keepsDown && (aiming || _firingFor > 0f) ? _asset.KneelAim : _asset.KneelIdle)
             : lean != 0 ? (lean > 0 ? _asset.LeanRight : _asset.LeanLeft)
@@ -426,11 +431,17 @@ internal sealed class ModernBody : IDisposable
             }
         }
 
+        // Setting off into his run, or stopping from it.
+        if (_runClip is { } running)
+        {
+            stand = running;
+        }
+
         // Turning where he stands: the steps of a turn clip as big as the turn is fast -- 45, 135 or 180 degrees -- each played on
         // by the angle he turns, so his feet keep to his body whatever the speed. A turn once started is stepped a third of a
         // second at least (a rate over the line for a tick or two flickered the steps in and out), on the biggest clip it has
         // needed, so it does not change clip at every wobble of the rate.
-        bool canTurn = _act is null && !kneeling && !moving && !ReferenceEquals(_asset.TurnLeft, ModernClip.None);
+        bool canTurn = _act is null && _runClip is null && !kneeling && !moving && !ReferenceEquals(_asset.TurnLeft, ModernClip.None);
         if (canTurn && Math.Abs(turning) > TurnAboveRadiansPerSecond)
         {
             if (_turnFor <= 0f || _turnLeft != turning > 0f)
@@ -462,7 +473,8 @@ internal sealed class ModernBody : IDisposable
         // Crouched, his crouched walk; facing elsewhere than he goes, the clip for the way he goes against his facing.
         ModernClip limping = limp == 0 || crouched || heading != Vector2.Zero ? ModernClip.None
             : (_running ? _asset.LimpRun : _asset.LimpWalk)[limp > 0 ? 1 : 0];
-        ModernClip move = !ReferenceEquals(limping, ModernClip.None) ? limping
+        ModernClip move = _runClip is not null ? _asset.Run
+            : !ReferenceEquals(limping, ModernClip.None) ? limping
             : searching ? _asset.SearchWalk
             : crouched ? _asset.CrouchWalk
             : heading != Vector2.Zero ? (Math.Abs(heading.X) >= Math.Abs(heading.Y)
@@ -489,6 +501,7 @@ internal sealed class ModernBody : IDisposable
         float pace = moving && move.MetresPerSecond > 0f
             ? Math.Clamp(Speed / move.MetresPerSecond, SlowestPace, FastestPace)
             : 1f;
+        _moveWeight = _runClip is not null ? 0f : _moveWeight;
         _stride = (_stride + (TickSeconds * pace / move.Duration)) % 1f;
         Showing = FormattableString.Invariant(
             $"speed {Speed:0.00} m/s, stand {Name(stand)}, move {Name(move)} x{Smooth(_moveWeight):0.00} at pace {pace:0.00}, legs {(_turnClip is { } legs && _turnWeight > 0f ? Name(legs) : "-")} x{Smooth(_turnWeight):0.00}");
@@ -534,7 +547,7 @@ internal sealed class ModernBody : IDisposable
 
         // Only turning on the spot: going along, the clip's own feet keep to the ground at his pace, to under half a centimetre a tick at a
         // walk, and the leg pulled to a held foot and let go again was a hitch in the knee and the foot at every step, twice what the clip has.
-        LockFeet(travel, turning * TickSeconds, kneeling || moving || _act is not null);
+        LockFeet(travel, turning * TickSeconds, kneeling || moving || _act is not null || _runClip is not null);
 
         // Drawn every frame (DrawAt), the tick only poses: skinning here too was thrown away by the next frame, and landed on
         // the tick's frame all at once -- a frame in three twice as long as the others, a hitch thirty times a second. Where no
@@ -878,7 +891,7 @@ internal sealed class ModernBody : IDisposable
 
     // A pair of clips where the body is in them now.
     private ModernMix Mix(ModernClip stand, ModernClip move) =>
-        new(stand, ReferenceEquals(stand, _act) ? _actTime : _standTime, move, _stride * move.Duration, Smooth(_moveWeight),
+        new(stand, ReferenceEquals(stand, _runClip) ? _runClipTime : ReferenceEquals(stand, _act) ? _actTime : _standTime, move, _stride * move.Duration, Smooth(_moveWeight),
             _turnClip, _turnTime, Smooth(_turnWeight));
 
     /// <summary>Above this turn rate, in radians a second, a soldier standing still steps his turn.</summary>
@@ -895,6 +908,91 @@ internal sealed class ModernBody : IDisposable
 
     private ModernClip? _act;
     private float _actTime;
+
+    /// <summary>How much way he must have left to set off with a run start, in metres: enough for the start and a stop. How near the end of it a stop may begin
+    /// when his stride comes to one, and how near a stop begins whatever his stride; further than the last from his end, a stop he is playing is called off.</summary>
+    public const float RunStartNeedsMetres = 2.2f, RunStopFromMetres = 1.35f, RunStopByMetres = 0.55f, RunStopOffMetres = 2.5f;
+
+    // The run start or stop he is playing, and how far through it.
+    private ModernClip? _runClip;
+    private float _runClipTime;
+
+    // Starts, plays on and ends a run start or stop. It is played at his own pace, so its feet keep to the ground he covers, and at
+    // its own once he has stopped; anything else he comes to do ends it, carried over by the inertial blend.
+    private void TickRunClip(bool moving, bool wasStill, bool runs, float wayLeft, bool shot, bool otherGait)
+    {
+        ModernClip start = _asset.RunStart, left = _asset.RunStopLeft, right = _asset.RunStopRight;
+        if (ReferenceEquals(start, ModernClip.None) || ReferenceEquals(left, ModernClip.None) || ReferenceEquals(right, ModernClip.None))
+        {
+            return;
+        }
+
+        if (_runClip is null)
+        {
+            if (otherGait || _act is not null)
+            {
+                return;
+            }
+
+            if (wasStill && moving && runs && wayLeft >= RunStartNeedsMetres)
+            {
+                BeginRunClip(start);
+            }
+            else if (_running && runs && wayLeft > 0f && wayLeft <= RunStopFromMetres)
+            {
+                // The foot his stride is coming to; by the last of his way, the nearer.
+                float reach = TickSeconds * Speed / Math.Max(_asset.Run.MetresPerSecond, 0.1f) / _asset.Run.Duration;
+                float toLeft = StrideTo(ModernBodyAsset.RunStopLeftFrom), toRight = StrideTo(ModernBodyAsset.RunStopRightFrom);
+                if (Math.Min(toLeft, toRight) <= reach || wayLeft <= RunStopByMetres)
+                {
+                    BeginRunClip(toLeft <= toRight ? left : right);
+                }
+            }
+
+            return;
+        }
+
+        bool isStart = ReferenceEquals(_runClip, start);
+        bool off = otherGait || _act is not null || (isStart ? !moving || !runs : shot || (moving && wayLeft > RunStopOffMetres) || (wasStill && moving));
+        if (off)
+        {
+            EndRunClip(moving, _stride);
+            return;
+        }
+
+        // At his own pace going along, by how fast the clip's root goes here; at the clip's own otherwise.
+        float rate = 1f;
+        float clipSpeed = Vector3.Distance(_runClip.TravelAt(_runClipTime + TickSeconds), _runClip.TravelAt(_runClipTime)) * _asset.RunMetresPerTravel / TickSeconds;
+        if (moving && clipSpeed > 0.3f)
+        {
+            rate = Math.Clamp(Speed / clipSpeed, 0.6f, 1.6f);
+        }
+
+        _runClipTime += TickSeconds * rate;
+        if (_runClipTime >= _runClip.Duration)
+        {
+            EndRunClip(moving, isStart ? ModernBodyAsset.RunStartMeets : _stride);
+        }
+    }
+
+    // How far on in the stride a place in it is, as a share of the stride.
+    private float StrideTo(float place) => ((place - _stride) + 1f) % 1f;
+
+    private void BeginRunClip(ModernClip clip)
+    {
+        (_runClip, _runClipTime, _moveWeight) = (clip, 0f, 0f);
+        _inertia.Begin = true;
+    }
+
+    private void EndRunClip(bool moving, float stride)
+    {
+        (_runClip, _stride, _standTime) = (null, stride, 0f);
+        _moveWeight = moving ? 1f : 0f;
+        _inertia.Begin = true;
+    }
+
+    /// <summary>Gets the run start or stop he is playing and how far through it, for testing.</summary>
+    internal (ModernClip? Clip, float Time) RunClipForTesting => (_runClip, _runClipTime);
     private float _turnTime;
     private float _turnFor;
     private bool _turnLeft;

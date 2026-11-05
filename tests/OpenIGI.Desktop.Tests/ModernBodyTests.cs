@@ -275,6 +275,137 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
         }
     }
 
+    // A body told to run a way and stop, as the brain's pace goes: from rest at five metres a second each second, braked at six.
+    private static List<(string Showing, float Speed, Vector3 Hips, Vector3 Head)> RunAWay(ModernBodyAsset asset, ModernBody body, float way, int settle)
+    {
+        int hips = Array.IndexOf(asset.Names, "mixamorig:Hips"), head = Array.IndexOf(asset.Names, "mixamorig:Head");
+        List<(string, float, Vector3, Vector3)> story = [];
+        float pace = 0f, left = way;
+        for (int tick = 0; tick < 20; tick++)
+        {
+            body.Tick(0f, 0f, aiming: true);
+        }
+
+        while (left > 0.002f)
+        {
+            float wanted = Math.Min(3.2f, Math.Max(0.6f, MathF.Sqrt(2f * 6f * left)));
+            pace = pace < wanted ? Math.Min(wanted, pace + (5f / 30f)) : Math.Max(wanted, pace - (6f / 30f));
+            float step = Math.Min(Math.Max(pace, 0.6f) / 30f, left);
+            left -= step;
+            body.Tick(step, 0f, aiming: true, travel: new Vector2(step, 0f), runs: true, wayLeft: left);
+            story.Add((body.Showing, step * 30f, body.BoneForTesting(hips), body.BoneForTesting(head)));
+        }
+
+        for (int tick = 0; tick < settle; tick++)
+        {
+            body.Tick(0f, 0f, aiming: true);
+            story.Add((body.Showing, 0f, body.BoneForTesting(hips), body.BoneForTesting(head)));
+        }
+
+        return story;
+    }
+
+    /// <summary>A long run sets off on the run start, goes into the run, stops on a stop, and ends aiming, with no jump in his body at any of the cuts.</summary>
+    [RequiresModernBodyFact]
+    public void ALongRunStartsAndStopsOnItsClips()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        var story = RunAWay(asset, body, 8f, 45);
+        string[] clips = [.. story.Select(s => s.Showing.Split("stand ")[1].Split(',')[0])];
+        output.WriteLine(string.Join(" ", clips.Where((c, i) => i == 0 || clips[i - 1] != c)));
+        float worst = 0f;
+        for (int i = 1; i < story.Count; i++)
+        {
+            worst = Math.Max(worst, Vector3.Distance(story[i].Hips, story[i - 1].Hips));
+        }
+
+        output.WriteLine(FormattableString.Invariant($"worst hips step {worst * 100f:0.0} cm a tick"));
+        Assert.Equal("run_start", clips[0]);
+        Assert.Contains(clips, c => c.StartsWith("run_stop_", StringComparison.Ordinal));
+        Assert.Equal("aim_idle", clips[^1]);
+        Assert.Contains("move run", story[story.Count / 2].Showing, StringComparison.Ordinal);
+        Assert.True(worst < 0.08f, $"his hips jumped {worst * 100f:0.0} cm in a tick");
+    }
+
+    /// <summary>A foot at a cut into or out of the run jumps no more than it does anyway in the run itself.</summary>
+    [RequiresModernBodyFact]
+    public void AFootDoesNotPopAtTheCuts()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        int[] feet = [Array.IndexOf(asset.Names, "mixamorig:LeftFoot"), Array.IndexOf(asset.Names, "mixamorig:RightFoot")];
+        for (int tick = 0; tick < 20; tick++)
+        {
+            body.Tick(0f, 0f, aiming: true);
+        }
+
+        float pace = 0f, left = 10f;
+        List<(string Clip, Vector3[] Feet)> story = [];
+        Vector3 walked = Vector3.Zero;
+        while (left > 0.002f)
+        {
+            float wanted = Math.Min(3.2f, Math.Max(0.6f, MathF.Sqrt(2f * 6f * left)));
+            pace = pace < wanted ? Math.Min(wanted, pace + (5f / 30f)) : Math.Max(wanted, pace - (6f / 30f));
+            float step = Math.Min(Math.Max(pace, 0.6f) / 30f, left);
+            left -= step;
+            body.Tick(step, 0f, aiming: true, travel: new Vector2(step, 0f), runs: true, wayLeft: left);
+            walked += ModernBodyAsset.FromBody(new Vector3(0f, step, 0f));
+            story.Add((body.RunClipForTesting.Clip is { } clip ? asset.NameOf(clip) : "run", [walked + body.BoneForTesting(feet[0]), walked + body.BoneForTesting(feet[1])]));
+        }
+
+        float atCuts = 0f, inRun = 0f;
+        for (int i = 2; i < story.Count - 1; i++)
+        {
+            bool cut = story[i].Clip != story[i - 1].Clip || story[i + 1].Clip != story[i].Clip;
+            foreach (int foot in (int[])[0, 1])
+            {
+                float change = ((story[i + 1].Feet[foot] - story[i].Feet[foot]) - (story[i].Feet[foot] - story[i - 1].Feet[foot])).Length() * 30f;
+                atCuts = cut ? Math.Max(atCuts, change) : atCuts;
+                inRun = !cut && story[i].Clip == "run" && story[i + 1].Clip == "run" && story[i - 1].Clip == "run" ? Math.Max(inRun, change) : inRun;
+            }
+        }
+
+        output.WriteLine(FormattableString.Invariant($"worst change of a foot's speed: {atCuts:0.00} at the cuts, {inRun:0.00} in the run"));
+        Assert.True(inRun > 0f, "he never ran");
+        Assert.True(atCuts <= inRun * 1.25f, $"a foot jumped {atCuts:0.00} at a cut against {inRun:0.00} in the run");
+    }
+
+    /// <summary>A short move has no room for them: he goes as he always has.</summary>
+    [RequiresModernBodyFact]
+    public void AShortMoveHasNoRunStart()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        var story = RunAWay(asset, body, 1.5f, 10);
+        Assert.DoesNotContain(story, s => s.Showing.Contains("run_start", StringComparison.Ordinal));
+    }
+
+    /// <summary>Called on again as he stops, he leaves the stop and runs; and a shot ends one in its settling.</summary>
+    [RequiresModernBodyFact]
+    public void AStopGivesWayToANewOrderOrAShot()
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        RunAWay(asset, body, 8f, 3);
+        Assert.NotNull(body.RunClipForTesting.Clip);
+
+        // Sent on again a long way.
+        body.Tick(0.6f / 30f, 0f, aiming: true, travel: new Vector2(0.02f, 0f), runs: true, wayLeft: 8f);
+        Assert.NotEqual(asset.RunStopLeft, body.RunClipForTesting.Clip);
+        Assert.NotEqual(asset.RunStopRight, body.RunClipForTesting.Clip);
+
+        using ModernBody other = new(asset, device);
+        RunAWay(asset, other, 8f, 3);
+        Assert.NotNull(other.RunClipForTesting.Clip);
+        other.Tick(0f, 0f, aiming: true, shots: 1);
+        Assert.Null(other.RunClipForTesting.Clip);
+    }
+
     /// <summary>
     /// A frame drawn between ticks poses the body between them, as his place is drawn: a running stride half a tick on is
     /// halfway between the two ticks' poses, not either of them (posed only each tick, his limbs stepped at thirty a second).
