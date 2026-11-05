@@ -140,6 +140,20 @@ public static class ExposureCVars
         CVarOptions.Hidden | CVarOptions.ReadOnly,
         "How far into night the sun has gone, 0 to 1. Dims the picture; not a setting.");
 
+    /// <summary>How much further the eye may open at full night than on a dim day, in stops. Daylight is untouched by it.</summary>
+    public static readonly NumericCVar<float> NightOpenStops = Presets.Define(
+        CVar.Float(
+            "r_night_open",
+            0.4f,
+            0f,
+            4f,
+            CVarOptions.Archive,
+            "How much further the eye opens at full night, in stops. Higher makes night missions brighter; daylight is untouched."),
+        vanilla: "0.4",
+        enhanced: "2.5",
+        high: "2.5",
+        ultra: "2.5");
+
     /// <summary>Whether the time of day runs on its own while a mission is played.</summary>
     /// <remarks>
     /// <para>

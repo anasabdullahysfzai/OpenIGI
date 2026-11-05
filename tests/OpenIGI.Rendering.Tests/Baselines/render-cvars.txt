@@ -116,6 +116,7 @@ r_motion_blur	0	archive
 r_msaa	4	archive
 r_muzzle_flash	1	archive
 r_night_airglow	0.0005	archive
+r_night_open	0.4	archive
 r_night_shift	0	archive
 r_night_sky	0.02	archive
 r_nightfall	0	-

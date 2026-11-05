@@ -54,13 +54,10 @@ public sealed class ExposureAdaptation
     // proportionally darker. A dark-adapted eye goes on opening for a good while past where a daylit one
     // stops, which is what this allows.
     //
-    // Four tenths of a stop, not the two it was: the histogram now meters the whole frame -- a night's
-    // dim surfaces and dark sky included, instead of only the few pixels bright enough to clear its
-    // darkest bucket -- so at night the metered average sits at the bottom of the range and this floor is
-    // what sets the night's exposure. Four tenths puts it at about thirteen, where the approved night's
-    // ground-facing views already were; two stops would have opened a night to forty, three times as
-    // bright. Still well above the histogram's own bottom (2^-8), under which nothing can be metered.
-    private const float NightFloorStops = 0.4f;
+    // ExposureCVars.NightOpenStops: the histogram meters the whole frame -- a night's dim surfaces and dark sky
+    // included -- so at night the metered average sits at the bottom of the range and this floor is what sets
+    // the night's exposure. Upstream's four tenths of a stop, about thirteen, left the modern presets' night
+    // missions all but black; the modern AI branch opens further, to about forty. Not retail.
 
     // How much darker than middle grey a dim view by day is allowed to stay, per stop it meters below middle
     // grey, and the most it may: a shaded yard or an unlit room is SEEN as darker than an open one, not lifted
@@ -130,7 +127,7 @@ public sealed class ExposureAdaptation
     /// <param name="deltaSeconds">How much time this frame advances the easing by.</param>
     /// <param name="darkAdaptation">
     /// How far into night the sky is, 0 to 1: lowers the metering floor by up to
-    /// <see cref="NightFloorStops"/>, so the eye can open further on a night than on a dim day.
+    /// <see cref="ExposureCVars.NightOpenStops"/>, so the eye can open further on a night than on a dim day.
     /// </param>
     /// <returns>The scale that maps the metered scene to middle grey; one for an empty histogram.</returns>
     /// <remarks>
@@ -141,7 +138,7 @@ public sealed class ExposureAdaptation
     public float Adapt(ReadOnlySpan<uint> histogram, float deltaSeconds, float darkAdaptation = 0f)
     {
         float minAverage = MinAverageLuminance
-            * MathF.Pow(2f, -NightFloorStops * Math.Clamp(darkAdaptation, 0f, 1f));
+            * MathF.Pow(2f, -ExposureCVars.NightOpenStops.Value * Math.Clamp(darkAdaptation, 0f, 1f));
 
         if (histogram.Length < Bins)
         {

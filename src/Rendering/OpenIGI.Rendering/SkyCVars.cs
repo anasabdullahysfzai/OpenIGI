@@ -87,9 +87,9 @@ public static class SkyCVars
             CVarOptions.Archive,
             "How much of the moon's light the night sky scatters, which is what fills a night's shadows."),
         vanilla: "0.02",
-        enhanced: "0.35",
-        high: "0.35",
-        ultra: "0.35");
+        enhanced: "0.55",
+        high: "0.55",
+        ultra: "0.55");
 
     /// <summary>The night sky's own glow at the zenith, in the atmosphere's units.</summary>
     /// <remarks>
@@ -112,9 +112,9 @@ public static class SkyCVars
             CVarOptions.Archive,
             "The night sky's own faint glow, which lights a moonless night. 0 is off."),
         vanilla: "0.0005",
-        enhanced: "0.0005",
-        high: "0.0005",
-        ultra: "0.0005");
+        enhanced: "0.004",
+        high: "0.004",
+        ultra: "0.004");
 
     /// <summary>Whether the night sky draws its stars, the galaxy and the moon's disc.</summary>
     public static readonly BoolCVar Stars = Presets.Define(

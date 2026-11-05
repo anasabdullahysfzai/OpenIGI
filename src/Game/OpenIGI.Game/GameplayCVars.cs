@@ -387,7 +387,7 @@ public static class GameplayCVars
     /// </remarks>
     public static readonly NumericCVar<float> ModernBodyTone = CVar.Float(
         "g_modern_body_tone",
-        0.35f,
+        0.6f,
         0.1f,
         1f,
         CVarOptions.Archive,

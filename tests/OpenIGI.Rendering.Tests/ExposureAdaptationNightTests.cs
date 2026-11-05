@@ -18,10 +18,12 @@ public sealed class ExposureAdaptationNightTests
     }
 
     [Fact]
-    public void A_full_night_lets_it_open_four_tenths_of_a_stop_further()
+    public void A_full_night_opens_as_far_as_the_setting_says()
     {
-        // Four tenths, not two: with the whole frame metered, a night's average sits on this floor, so the
-        // floor is the night's exposure, and it is held where the approved night's views already were.
+        // With the whole frame metered, a night's average sits on this floor, so the floor is the night's exposure.
+        float previous = ExposureCVars.NightOpenStops.Value;
+        ExposureCVars.NightOpenStops.Value = 0.4f;
+        using IDisposable restore = new Restore(() => ExposureCVars.NightOpenStops.Value = previous);
         Assert.Equal(10f * MathF.Pow(2f, 0.4f), new ExposureAdaptation().Adapt(DarkScene(), 1f / 60f, darkAdaptation: 1f), 3);
     }
 
@@ -32,6 +34,11 @@ public sealed class ExposureAdaptationNightTests
         float night = new ExposureAdaptation().Adapt(Scene(bin: 40), 1f / 60f, darkAdaptation: 1f);
 
         Assert.Equal(day, night, 5);
+    }
+
+    private sealed class Restore(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
     }
 
     // Every pixel in the second bucket: 2^-7.8, darker than either floor.
