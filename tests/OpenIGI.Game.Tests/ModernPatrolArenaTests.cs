@@ -60,8 +60,8 @@ public sealed class ModernPatrolArenaTests(ITestOutputHelper output)
             }
         }
 
-        (int Stops, int Longest, int Glances, int Legs, int Walking) first = One(true, 11), second = One(true, 23), original = One(false, 11);
-        output.WriteLine($"guard 11 {first}\nguard 23 {second}\noriginal {original}");
+        (int Stops, int Longest, int Glances, int Legs, int Walking) first = One(true, 14), second = One(true, 36), original = One(false, 14);
+        output.WriteLine($"guard 14 {first}\nguard 36 {second}\noriginal {original}");
 
         Assert.InRange(first.Stops, 3, 20);
         Assert.InRange(first.Longest, Igi1HumanAi.PatrolStopTicks, Igi1HumanAi.LookAroundTicks + 30);
@@ -72,6 +72,63 @@ public sealed class ModernPatrolArenaTests(ITestOutputHelper output)
         Assert.Equal(0, original.Glances);
     }
 
+    /// <summary>
+    /// A guard walking round a room keeps his turn to a man's and still arrives at every leg's end, and sways a little on the long
+    /// straights.
+    /// </summary>
+    [RequiresGameDataFact]
+    public void AGuardCurvesThroughHisCornersAndStillGetsThere()
+    {
+        bool previous = GameplayCVars.ModernAi.Value;
+        GameplayCVars.ModernAi.Value = true;
+        try
+        {
+            {
+                ModernArena arena = new ModernArena().Box(0, 22, 0, 30, 23, 4.0);
+                GraphFile graph = arena.Build(spacing: 10.0);
+                int Near(double x, double y) => graph.Nodes.OrderBy(n => Vector3d.Distance(n.Position, ModernArena.At(x, y))).First().Id;
+                int a = Near(4, 4), b = Near(26, 4), c = Near(26, 16), d = Near(4, 16);
+                AiPatrolCommand[] commands = [.. Enumerable.Range(0, 6)
+                    .SelectMany(_ => new[] { a, b, c, d }).Select(n => new AiPatrolCommand(AiPatrolCommandKind.WalkTo, n))];
+                AiPatrolPathRegistry paths = new();
+                paths.Add(new AiPatrolPath(1, commands));
+                Igi1HumanAi guard = arena.Patrol(ModernArena.At(4, 4), 0f, _ => { }, seed: 11);
+                guard.SetPatrolPaths(paths);
+                guard.Tick(0, ModernArena.At(15, 28) + new Vector3d(0, 0, 1.6 * ModernArena.Metre), rootMotionThisTick: 0.0, enemyFeet: ModernArena.At(15, 28));
+                guard.ApplyActions([new AiProducedAction("AIAction_Patrol", [1, 0, 0], 0)]);
+
+                double sharpest = 0.0, least = double.MaxValue, most = double.MinValue;
+                for (int tick = 1; tick <= 120 * 30; tick++)
+                {
+                    Vector3d before = guard.Position;
+                    float facing = guard.Facing;
+                    arena.Tick(guard, tick, ModernArena.At(15, 28));
+                    if (Vector3d.Distance(before, guard.Position) > 1.0 && guard.PatrolGlance is null)
+                    {
+                        sharpest = Math.Max(sharpest, Math.Abs(Igi1AiGeometry.Wrap(guard.Facing - facing)));
+                    }
+
+                    // The middle of the long leg along y = 4: how far his line strays from straight.
+                    if (guard.Position.X is > 10 * ModernArena.Metre and < 20 * ModernArena.Metre && guard.Position.Y < 8 * ModernArena.Metre)
+                    {
+                        least = Math.Min(least, guard.Position.Y);
+                        most = Math.Max(most, guard.Position.Y);
+                    }
+                }
+
+                double sway = (most - least) / ModernArena.Metre;
+                output.WriteLine($"sharpest {sharpest}, sway {sway} m, legs {guard.Route!.CurrentIndex}");
+                Assert.True(sharpest <= Igi1HumanAi.ModernTurnPerTick + 1e-3, $"he snapped round {sharpest} radians in a tick");
+                Assert.True(guard.Route!.CurrentIndex >= 8, $"he walked only {guard.Route!.CurrentIndex} legs in two minutes");
+                Assert.InRange(sway, 0.02, 0.5);
+            }
+        }
+        finally
+        {
+            GameplayCVars.ModernAi.Value = previous;
+        }
+    }
+
     /// <summary>On patrol his sight turns with his head: the eye a sweep tests against leaves his facing, both ways.</summary>
     [RequiresGameDataFact]
     public void HisSightTurnsWithHisGaze()
@@ -80,7 +137,7 @@ public sealed class ModernPatrolArenaTests(ITestOutputHelper output)
         GameplayCVars.ModernAi.Value = true;
         try
         {
-            (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 11);
+            (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 14);
             double wide = 0.0;
             bool left = false, right = false;
             for (int tick = 1; tick <= 400 * 30; tick++)
@@ -116,7 +173,7 @@ public sealed class ModernPatrolArenaTests(ITestOutputHelper output)
         {
             static double Stand(double side)
             {
-                (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 11, size: 60.0, wall: 45.0);
+                (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 14, size: 60.0, wall: 45.0);
                 Vector3d hidden = ModernArena.At(15, 50);
                 int stops = 0, began = -1;
                 Vector3d player = hidden;
@@ -165,7 +222,7 @@ public sealed class ModernPatrolArenaTests(ITestOutputHelper output)
         GameplayCVars.ModernAi.Value = true;
         try
         {
-            (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 11, size: 60.0, wall: 45.0);
+            (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 14, size: 60.0, wall: 45.0);
             List<string> story = [];
             guard.ModernLog = story.Add;
             int began = -1, stops = 0;

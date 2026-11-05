@@ -250,7 +250,7 @@ public sealed partial class Igi1HumanAi
                 continue;
             }
 
-            TurnTowards(waypoint.Point, 0f, level: true);
+            TurnTowards(GameplayCVars.ModernAi.Value ? SwayedToward(waypoint) : waypoint.Point, 0f, level: true);
             WalksForward = true;
             return false;
         }

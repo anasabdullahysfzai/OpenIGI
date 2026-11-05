@@ -203,7 +203,7 @@ public sealed partial class SoldierRenderer
         if (GameplayCVars.BodyLog.Value >= 0 && GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(
-                $"t{_sim.TickCount} {fighter.CoverState} state {fighter.CombatState} kneel {kneeling}: {body.Showing}"));
+                $"t{_sim.TickCount} at {fighter.Position.X / WorldScene.UnitsPerMetre:F2} {fighter.Position.Y / WorldScene.UnitsPerMetre:F2} face {fighter.Facing * 180f / MathF.PI:F1} node {fighter.CurrentNode}>{fighter.DestinationNode} {fighter.CoverState} state {fighter.CombatState} kneel {kneeling}: {body.Showing}"));
         }
     }
 

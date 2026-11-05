@@ -157,9 +157,78 @@ public sealed partial class Igi1HumanAi
     /// <summary>The most the modern AI turns in a tick, in radians: 240 degrees a second, an about-face in three quarters of one.</summary>
     public const double ModernTurnPerTick = (240.0 * Math.PI / 180.0) / 30.0;
 
-    /// <summary>The most the modern AI turns in a tick on the move, in radians: 540 degrees a second, a curve a third of a metre
-    /// across at a run, well inside the metre short of a waypoint he passes it.</summary>
+    /// <summary>The most the modern AI turns in a tick when his feet are not going where he faces (a strafe, a roll), in radians:
+    /// 540 degrees a second, so he keeps his aim on what he is shooting at.</summary>
     public const double ModernRunTurnPerTick = (540.0 * Math.PI / 180.0) / 30.0;
+
+    /// <summary>The most the modern AI turns in a tick running along his way, in radians: 180 degrees a second, a curve of about a
+    /// metre's radius at a run. At a walk and below he has <see cref="ModernTurnPerTick"/>.</summary>
+    public const double ModernCurvePerTick = (180.0 * Math.PI / 180.0) / 30.0;
+
+    /// <summary>How far either side of his way the modern AI's heading sways, in radians, and how far he goes for one sway, in
+    /// metres: about three degrees, a few centimetres off the line. Nobody walks on a rail.</summary>
+    public const double ModernSwayRadians = 0.05, ModernSwayMetres = 9.0;
+
+    // How far he has gone, in metres, for his sway.
+    private double _swayAlong;
+
+    // The most he turns in a tick going along his way at this pace.
+    private static double CurvePerTick(double pace)
+    {
+        double run = Math.Clamp((pace - ModernWalkMetresPerSecond) / (ModernRunMetresPerSecond - ModernWalkMetresPerSecond), 0.0, 1.0);
+        return ModernTurnPerTick + ((ModernCurvePerTick - ModernTurnPerTick) * run);
+    }
+
+    // The pace at which he makes the way ahead, in metres a second: where he is headed now, on a circle his turn can draw, and
+    // each corner of his route, braking in time for those a curve at full pace would swing wide of.
+    private double PaceForTheWay()
+    {
+        const double Tiny = 0.01;
+        double turnRate = ModernCurvePerTick * AiCombatParameters.TicksPerSecond;
+        Vector3d to = _route[0].Point - Position;
+        double left = Math.Sqrt((to.X * to.X) + (to.Y * to.Y)) / GraphNode.MetreInUnits;
+        double off = Math.Abs(Igi1AiGeometry.Wrap((float)Math.Atan2(-to.X, to.Y) - Facing));
+
+        // Only a point he must land on holds him to reaching it; any other he passes a metre short.
+        bool landsOn = _route.Count == 1 || _route[0].Door;
+        double most = off >= Math.PI / 2.0 ? ModernArriveMetresPerSecond
+            : landsOn && off > Tiny ? turnRate * left / (2.0 * Math.Sin(off))
+            : double.MaxValue;
+
+        Vector3d from = Position;
+        double ahead = 0.0;
+        for (int i = 0; i + 1 < _route.Count; i++)
+        {
+            Vector3d leg = _route[i].Point - from, next = _route[i + 1].Point - _route[i].Point;
+            ahead += Math.Sqrt((leg.X * leg.X) + (leg.Y * leg.Y)) / GraphNode.MetreInUnits;
+            double corner = Math.Abs(Math.Atan2((leg.X * next.Y) - (leg.Y * next.X), (leg.X * next.X) + (leg.Y * next.Y)));
+            from = _route[i].Point;
+            if (corner > Tiny)
+            {
+                double cut = _route[i].Door ? 0.3 : CornerMetres;
+                double there = turnRate * cut / Math.Tan(corner / 2.0);
+                most = Math.Min(most, Math.Sqrt((there * there) + (2.0 * ModernBrakePerSecond * Math.Max(0.0, ahead - cut))));
+            }
+        }
+
+        return Math.Max(ModernArriveMetresPerSecond, most);
+    }
+
+    // Where he steers for a waypoint: its way, swayed a little, and dead on it for the last few metres or at a door.
+    private Vector3d SwayedToward(AiWaypoint waypoint)
+    {
+        double left = Flat2(waypoint.Point, Position) / GraphNode.MetreInUnits;
+        if (waypoint.Door || left <= 2.0)
+        {
+            return waypoint.Point;
+        }
+
+        double angle = ModernSwayRadians * Math.Min(1.0, (left - 2.0) / 3.0)
+            * Math.Sin(((_swayAlong / ModernSwayMetres) + _ownWalkPace) * 2.0 * Math.PI);
+        Vector3d to = waypoint.Point - Position;
+        (double sin, double cos) = Math.SinCos(angle);
+        return new Vector3d(Position.X + (to.X * cos) - (to.Y * sin), Position.Y + (to.X * sin) + (to.Y * cos), waypoint.Point.Z);
+    }
 
     /// <summary>The modern AI's steady paces, in metres a second: the modern body's run and walk at their own speed (3.0 and
     /// 1.16), and above which an original stride counts as a run.</summary>
@@ -189,10 +258,6 @@ public sealed partial class Igi1HumanAi
     /// <summary>How short of a waypoint the modern AI passes it when another follows, in metres: he curves through.</summary>
     public const double CornerMetres = 1.0;
 
-    // Whether he is within a metre and a half of the last waypoint of his walk, which he must land on.
-    private bool NearLastWaypoint =>
-        _route.Count == 1 && Flat2(_route[0].Point, Position) < 1.5 * GraphNode.MetreInUnits;
-
     private static double Flat2(Vector3d a, Vector3d b)
     {
         double dx = a.X - b.X, dy = a.Y - b.Y;
@@ -218,14 +283,17 @@ public sealed partial class Igi1HumanAi
         }
 
         // The modern AI turns as a man can: on the spot half a turn in three quarters of a second at most (the original's turn
-        // comes round in a tick or two, which on a modern body is a snap); on the move, curving through his corners (Advance
-        // passes a waypoint a metre short when there is another after it), but sharp onto the last, which he must land on --
-        // a runner held to a turn rate there circled it for good.
+        // comes round in a tick or two, which on a modern body is a snap); going along his way, in a curve that widens with his
+        // pace (Advance passes a waypoint a metre short when there is another after it, and PaceForTheWay slows him enough that
+        // he makes it and never circles it); strafing or rolling, fast, for his aim.
         double turned = _bodyTurn.Step(turn);
         bool moving = Math.Abs(_rootMotionThisTick) >= 1.0 || Math.Abs(_rootLateralThisTick) >= 1.0;
-        if (GameplayCVars.ModernAi.Value && (!moving || !NearLastWaypoint))
+        (double MetresPerSecond, bool Along)? style = _stepStyle;
+        _stepStyle = null;
+        bool curving = moving && _route.Count > 0 && style is not { Along: true };
+        if (GameplayCVars.ModernAi.Value)
         {
-            double most = moving ? ModernRunTurnPerTick : ModernTurnPerTick;
+            double most = curving ? CurvePerTick(_modernPace) : moving ? ModernRunTurnPerTick : ModernTurnPerTick;
             turned = Math.Clamp(turned, -most, most);
         }
 
@@ -242,8 +310,6 @@ public sealed partial class Igi1HumanAi
         // a run at the run's pace, a walk at the walk's, and the modern fight's crouched or strafed step at theirs -- strafing,
         // laid along the way to the next waypoint whatever way he faces. Never past the waypoint.
         double step = Math.Sqrt((world.X * world.X) + (world.Y * world.Y));
-        (double MetresPerSecond, bool Along)? style = _stepStyle;
-        _stepStyle = null;
         if (GameplayCVars.ModernAi.Value && step > 1.0 && _route.Count > 0)
         {
             double original = step / GraphNode.MetreInUnits * AiCombatParameters.TicksPerSecond;
@@ -253,11 +319,17 @@ public sealed partial class Igi1HumanAi
             // so as to come to rest on the end of his walk, not at it full tilt.
             double ahead = RouteLeftUnits() / GraphNode.MetreInUnits;
             wanted = Math.Min(wanted, Math.Max(ModernArriveMetresPerSecond, Math.Sqrt(2.0 * ModernBrakePerSecond * ahead)));
+            if (curving)
+            {
+                wanted = Math.Min(wanted, PaceForTheWay());
+            }
+
             double dt = 1.0 / AiCombatParameters.TicksPerSecond;
             _modernPace = _modernPace < wanted
                 ? Math.Min(wanted, _modernPace + (ModernGatherPerSecond * dt))
                 : Math.Max(wanted, _modernPace - (ModernBrakePerSecond * dt));
             double pace = Math.Max(_modernPace, ModernArriveMetresPerSecond);
+            _swayAlong += pace * dt;
             double length = pace * GraphNode.MetreInUnits / AiCombatParameters.TicksPerSecond;
             Vector3d to = _route[0].Point - Position;
             double left = Math.Sqrt((to.X * to.X) + (to.Y * to.Y));
