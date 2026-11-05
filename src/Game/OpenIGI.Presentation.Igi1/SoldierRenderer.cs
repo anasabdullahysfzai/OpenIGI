@@ -83,6 +83,9 @@ public sealed partial class SoldierRenderer : ISoldierPresenter, IDisposable
     /// <remarks>Owned by the shell: one pack serves every renderer that loads a texture.</remarks>
     public MaterialDetailPack? DetailMaps { get; set; }
 
+    /// <summary>Sets what poses the modern bodies at once; without one they are posed one by one.</summary>
+    public Core.Threading.IWorkScheduler? Work { set => _frames.Work = value; }
+
     /// <summary>
     /// Gets or sets where the level's fixed-function light is read from: the original draws a soldier's body (<c>0x49F700</c>)
     /// and the gun in its hand (<c>0x49DF60</c>) through the lit state, the object ambient plus the Dirlight.

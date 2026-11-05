@@ -13,6 +13,7 @@ namespace OpenIGI.Presentation;
 /// <param name="DetailMaps">The material detail maps the bodies are shaded with, or <see langword="null"/> for none.</param>
 /// <param name="Sun">The level's fixed-function light as it stands, which the bodies and their guns are lit by; or none.</param>
 /// <param name="Lod">The level's detail settings as they stand, which a distant body gives up detail by; or none to draw it whole.</param>
+/// <param name="Work">What poses the modern bodies at once, or <see langword="null"/> to pose them one by one.</param>
 public readonly record struct SoldierPresentationRequest(
     IGraphicsDevice Device,
     ResourceRegistry Resources,
@@ -20,4 +21,5 @@ public readonly record struct SoldierPresentationRequest(
     MagicObjectRegistry? Magic = null,
     MaterialDetailPack? DetailMaps = null,
     Func<FixedFunctionSun?>? Sun = null,
-    Func<Rendering.ModelLodPolicy?>? Lod = null);
+    Func<Rendering.ModelLodPolicy?>? Lod = null,
+    Core.Threading.IWorkScheduler? Work = null);

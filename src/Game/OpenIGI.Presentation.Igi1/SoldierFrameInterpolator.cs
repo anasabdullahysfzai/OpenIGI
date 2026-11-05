@@ -34,6 +34,9 @@ namespace OpenIGI.Presentation.Igi1;
 /// <param name="logger">Where a ragdoll that cannot be seeded or has gone wrong is reported.</param>
 internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, SoldierSimulation sim, IOpenIgiLogger logger)
 {
+    /// <summary>Gets or sets what poses the modern bodies at once, or <see langword="null"/> to pose them one by one.</summary>
+    public Core.Threading.IWorkScheduler? Work { get; set; }
+
     // The one staged actor whose placement is traced each second, named by soldier id in
     // OPENIGI_TRACE_CUTSCENE_ACTOR. Read once: the check runs for every soldier on every tick.
     private static readonly string? TracedCutsceneActor = Environment.GetEnvironmentVariable("OPENIGI_TRACE_CUTSCENE_ACTOR");
@@ -101,7 +104,17 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
             }
 
             bool[] skinned = new bool[_modern.Count];
-            Parallel.For(0, _modern.Count, i => skinned[i] = _modern[i].SkinAt(alpha));
+            if (Work is { } work)
+            {
+                work.ForRange(0, _modern.Count, 0, i => skinned[i] = _modern[i].SkinAt(alpha));
+            }
+            else
+            {
+                for (int i = 0; i < _modern.Count; i++)
+                {
+                    skinned[i] = _modern[i].SkinAt(alpha);
+                }
+            }
             for (int i = 0; i < _modern.Count; i++)
             {
                 if (skinned[i])

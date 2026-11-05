@@ -775,6 +775,7 @@ public static class GraphicsMenu
         // until a night read as dark but legible; moving one alone relights every night mission. The
         // stars, the moon's disc and the night-vision shift are the Preset row's (off on vanilla, on
         // above it), not a separate choice.
+        "r_night_open",
         "r_night_sky",
         "r_night_airglow",
         "r_moonlight",

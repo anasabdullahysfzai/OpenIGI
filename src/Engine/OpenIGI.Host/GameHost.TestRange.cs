@@ -189,7 +189,7 @@ public sealed partial class GameHost
 
         if (_mission.PlayerHealth is { } health)
         {
-            health.Invulnerable = GameplayCVars.God.Value;
+            health.Invulnerable = GameplayCVars.God.Value || Game.Player.PlayerCheatOptions.Current.InfiniteHealth;
         }
     }
 

@@ -43,7 +43,7 @@ public sealed class Igi1PresentationProvider : ITitlePresentationProvider
             .Add<MissionPresentationRequest, IMissionViewpoint>(static (in MissionPresentationRequest request) =>
                 request.Gameplay is Igi1Gameplay gameplay ? new Igi1Viewpoint(gameplay) : null)
             .Add<SoldierPresentationRequest, ISoldierBodies>(static (in SoldierPresentationRequest request) =>
-                new SoldierRenderer(request.Device, request.Resources, request.Logger, request.Magic, SoldierWeapons(request)) { DetailMaps = request.DetailMaps, Sun = request.Sun, Lod = request.Lod })
+                new SoldierRenderer(request.Device, request.Resources, request.Logger, request.Magic, SoldierWeapons(request)) { DetailMaps = request.DetailMaps, Sun = request.Sun, Lod = request.Lod, Work = request.Work })
             .Add<WorldPresentationRequest, IWorldPresenter>(CreateWorld)
             .Add<SkyPresentationRequest, ISkyPresenter>(CreateSky)
             .Add<ViewModelPresentationRequest, IViewModelPresenter>(CreateViewModel)
