@@ -155,6 +155,17 @@ public sealed partial class Igi1HumanAi
     // When he last gave up on the player; a mate's ping with no news since does not bring him back (ReceiveAlert).
     private int _gaveUpTick = -1;
     private bool _shotFirst;
+
+    // When he last saw the player with his own eyes, and when he last stopped a run to shoot at him.
+    private int _ownSightTick;
+    private int _stoppedRunTick = -StopAgainTicks;
+
+    /// <summary>How long the player has to have been out of his sight to count as coming into view, and how soon after stopping a run
+    /// for him a guard may stop another, in ticks: so that a man flickering past a post does not stop him at every step.</summary>
+    public const int CameIntoViewTicks = SightMemoryTicks, StopAgainTicks = 60;
+
+    /// <summary>How far he must still have to run to stop for a man coming into view, in metres: nearer than this he finishes, and shoots from there.</summary>
+    public const double StopsRunAboveMetres = 3.0;
     private int _burstsLeft;
     private AiCombatPhase _lastFirePhase;
     private Vector3d? _lastKnown;
@@ -221,6 +232,8 @@ public sealed partial class Igi1HumanAi
         // What he knows: the player where he sees him, else where any of them last did.
         Vector3d feet = LiveTargetFeet(enemy);
         bool seesNow = TargetSlot.IsVisible;
+        bool cameIntoView = seesNow && tick - _ownSightTick >= CameIntoViewTicks;
+        _ownSightTick = seesNow ? tick : _ownSightTick;
 
         // A moment out of sight is not losing him: he remembers a man who flickers behind a post, and does not change his mind.
         bool seen = seesNow || (_lastSeenTick > 0 && tick - _lastSeenTick < SightMemoryTicks);
@@ -276,10 +289,13 @@ public sealed partial class Igi1HumanAi
 
             case TacticPhase.Moving:
             case TacticPhase.Advancing:
-                // Called into the fight by a sound or a mate, and here is the man himself: he stops and shoots, the first time.
-                // Not if he is running for cover from fire.
-                if (seesNow && !_shotFirst && !_pendingDown)
+                // On his way, and here is the man himself: he stops and shoots, the first time and whenever he comes into view again.
+                // Not if he is running for cover from fire, or strafing, which is a move he chose with the man in sight.
+                bool stopsForHim = !_shotFirst || (cameIntoView && tick - _stoppedRunTick >= StopAgainTicks && (_tactic == TacticPhase.Advancing || _moveStyle != MoveStyle.Strafe)
+                    && RouteLeftUnits() > StopsRunAboveMetres * GraphNode.MetreInUnits);
+                if (seesNow && !_pendingDown && stopsForHim)
                 {
+                    _stoppedRunTick = tick;
                     _route.Clear();
                     DestinationNode = -1;
                     _movingInCombat = false;
@@ -294,6 +310,12 @@ public sealed partial class Igi1HumanAi
                 AdvanceInCombat();
                 if (_route.Count > 0)
                 {
+                    // Running for cover with the man in sight: he keeps going, but backs and sidesteps with his rifle on him.
+                    if (_tactic == TacticPhase.Moving && _pendingDown && _moveStyle != MoveStyle.Crouch)
+                    {
+                        _moveStyle = seen ? MoveStyle.Strafe : MoveStyle.Run;
+                    }
+
                     // Crouched, slower along his way; strafing, slower still on his way but facing the player all along.
                     if (_tactic == TacticPhase.Moving && _moveStyle != MoveStyle.Run)
                     {
@@ -913,6 +935,7 @@ public sealed partial class Igi1HumanAi
     {
         _tactic = TacticPhase.None;
         _shotFirst = false;
+        (_ownSightTick, _stoppedRunTick) = (0, -StopAgainTicks);
         (_fireNode, _downNode, _downLow) = (-1, -1, false);
         _lastKnown = null;
         _lastSeenTick = 0;

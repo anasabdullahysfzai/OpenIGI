@@ -224,6 +224,105 @@ public sealed class ModernFairnessArenaTests(ITestOutputHelper output)
         });
     }
 
+    /// <summary>
+    /// A guard who has had his first shot, on a run he set off on with the player out of sight: the player steps out ahead of him, and he
+    /// stops and shoots, rather than running on past him as if he were not there.
+    /// </summary>
+    [RequiresGameDataFact]
+    public void AGuardOnARunStopsWheneverAManComesIntoView()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(70.0).Box(0, 34, 0, 70, 35, 4.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Igi1HumanAi guard = arena.Patrol(ModernArena.At(35, 6), 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"), seed: 11);
+            Vector3d hidden = ModernArena.At(35, 60), player = ModernArena.At(35, 20);
+            int hideAt = -1, running = 0, cameOutAt = -1, stoppedAt = -1, shotAt = -1;
+            Vector3d cameOutFrom = default, stoppedAtPlace = default;
+            for (tick = 1; tick <= 60 * 30 && (stoppedAt < 0 || shotAt < 0); tick++)
+            {
+                arena.Tick(guard, tick, player);
+                bool runs = guard.CoverState is "Moving" or "Advancing" && guard.WalksForward;
+                if (hideAt < 0 && story.Exists(line => line.Contains("shoots first", StringComparison.Ordinal)))
+                {
+                    hideAt = tick + 75;
+                }
+                else if (hideAt > 0 && tick == hideAt)
+                {
+                    player = hidden;
+                }
+                else if (hideAt > 0 && tick > hideAt && cameOutAt < 0)
+                {
+                    running = runs ? running + 1 : 0;
+                    if (running >= 12)
+                    {
+                        Vector3f ahead = guard.Orientation.Column2;
+                        player = guard.Position + (new Vector3d(ahead.X, ahead.Y, 0.0) * (9.0 * Metre));
+                        (cameOutAt, cameOutFrom) = (tick, guard.Position);
+                    }
+                }
+                else if (cameOutAt > 0)
+                {
+                    if (!runs && stoppedAt < 0)
+                    {
+                        (stoppedAt, stoppedAtPlace) = (tick, guard.Position);
+                    }
+
+                    shotAt = shotAt < 0 && guard.Combat.PullTrigger ? tick : shotAt;
+                }
+            }
+
+            output.WriteLine(string.Join("\n", story));
+            output.WriteLine($"came out at {cameOutAt}, stopped at {stoppedAt}, shot at {shotAt}");
+            Assert.True(cameOutAt > 0, "he never set off");
+            Assert.InRange(stoppedAt - cameOutAt, 0, 15);
+            Assert.True(Vector3d.Distance(cameOutFrom, stoppedAtPlace) < 2.0 * Metre, "he ran on past him");
+            Assert.InRange(shotAt - cameOutAt, 0, 60);
+        });
+    }
+
+    /// <summary>A guard pinned in the open, running for cover with the player in sight, keeps going, but with his rifle on him and firing as he goes.</summary>
+    [RequiresGameDataFact]
+    public void AGuardRunningForCoverFiresOnTheManHeCanSee()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(60.0).Box(44, 8, 0, 47, 16, 4.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0, strafing = 0, firing = 0;
+            Igi1HumanAi guard = arena.Patrol(ModernArena.At(30, 12), 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"), seed: 11);
+            Vector3d player = ModernArena.At(30, 30);
+            int ranAt = -1;
+            for (tick = 1; tick <= 30 * 30; tick++)
+            {
+                arena.Tick(guard, tick, player);
+                ranAt = ranAt < 0 && story.Exists(line => line.Contains("runs for cover", StringComparison.Ordinal)) ? tick : ranAt;
+                if (ranAt < 0 && tick % 6 == 0)
+                {
+                    arena.Shoot(guard, player, guard.Position + new Vector3d(1.0 * Metre, 0.0, 1.2 * Metre));
+                }
+                else if (ranAt > 0 && guard.CoverState == "Moving" && guard.WalksForward)
+                {
+                    strafing += guard.Strafing ? 1 : 0;
+                    firing += guard.Combat.PullTrigger ? 1 : 0;
+                }
+                else if (ranAt > 0 && tick > ranAt + 1)
+                {
+                    break;
+                }
+            }
+
+            output.WriteLine(string.Join("\n", story));
+            output.WriteLine($"ran at {ranAt}: strafing {strafing} ticks, firing {firing}");
+            Assert.True(ranAt > 0, "nothing pinned him into a run for cover");
+            Assert.True(strafing > 10, "he turned his back on the man he could see");
+            Assert.True(firing > 0, "he never fired on the way");
+        });
+    }
+
     private static void With(Action run)
     {
         bool previous = GameplayCVars.ModernAi.Value;
