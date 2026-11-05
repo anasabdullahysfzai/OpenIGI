@@ -96,7 +96,7 @@ public sealed partial class Igi1HumanAi
 
         double gain = running ? HeardRunSuspicion : HeardStepSuspicion;
         player.Suspicion = Math.Max(player.Suspicion, Math.Min(HeardSuspicionCap, player.Suspicion + gain));
-        _heardAt = position;
+        _heardAt = GameplayCVars.FairSenses.Value ? GuessAt(position) : position;
         return true;
     }
 

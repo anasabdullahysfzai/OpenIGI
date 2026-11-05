@@ -343,6 +343,20 @@ public static class GameplayCVars
         CVarOptions.Archive,
         "The folder of the guards' spoken callouts (callout_voice_key_variant.wav); empty for none.");
 
+    /// <summary>Whether the modern AI's fights are fair: only so many fire at once, and aim comes with tracking.</summary>
+    public static readonly BoolCVar FairFights = CVar.Bool(
+        "g_ai_fair_fights",
+        true,
+        CVarOptions.Archive,
+        "Modern AI: at most three of a squad fire at once, and their aim tightens the longer they track you.");
+
+    /// <summary>Whether the modern AI knows only what it could: a sound gives a guess, and a squad shares only within reach.</summary>
+    public static readonly BoolCVar FairSenses = CVar.Bool(
+        "g_ai_fair_senses",
+        true,
+        CVarOptions.Archive,
+        "Modern AI: sounds give guards a guess at where you are, and they share what they see only within 30 m.");
+
     /// <summary>How far the modern character is turned about up, in degrees, for one authored facing another way.</summary>
     public static readonly NumericCVar<float> ModernBodyYaw = CVar.Float(
         "g_modern_body_yaw",

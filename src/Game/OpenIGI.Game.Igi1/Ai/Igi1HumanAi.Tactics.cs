@@ -74,6 +74,18 @@ public sealed partial class Igi1HumanAi
     /// <summary>The furthest he strafes to a position he can see the player from, in metres; further, he runs.</summary>
     public const double StrafeReachMetres = 8.0;
 
+    /// <summary>How long he stands and shoots at a man he has just spotted in view before he thinks of moving, in ticks.</summary>
+    public const int ReactTicks = 45;
+
+    /// <summary>What a metre's walk to a position costs in its score with the player out of view, and with him in view.</summary>
+    public const double WalkCost = 0.6, WalkCostInView = 1.2;
+
+    /// <summary>Firing while strafing: how long into the move he starts, ticks on the trigger, how often, and what share of his aim he keeps.</summary>
+    public const int MoveBurstAfterTicks = 10, MoveBurstTicks = 8, MoveBurstEveryTicks = 30;
+
+    /// <inheritdoc cref="MoveBurstTicks"/>
+    public const float MovingAimShare = 0.5f;
+
     /// <summary>
     /// How much incoming fire pins him, nought up: each round past or into him adds <see cref="SuppressionPerRound"/>, and it
     /// wears off at <see cref="SuppressionFadePerSecond"/>. Over <see cref="PinnedAbove"/>, down in cover he stays down, up to
@@ -139,6 +151,10 @@ public sealed partial class Igi1HumanAi
     private int _holdUntil;
     private int _downUntil;
     private int _lastSeenTick;
+
+    // When he last gave up on the player; a mate's ping with no news since does not bring him back (ReceiveAlert).
+    private int _gaveUpTick = -1;
+    private bool _shotFirst;
     private int _burstsLeft;
     private AiCombatPhase _lastFirePhase;
     private Vector3d? _lastKnown;
@@ -211,17 +227,24 @@ public sealed partial class Igi1HumanAi
         if (seesNow)
         {
             (_lastKnown, _lastSeenTick) = (feet, tick);
-            _squad?.Saw(feet, tick);
+            _squad?.Saw(feet, tick, Position);
         }
-        else if (_squad?.LastSeen is { } shared && shared.Tick > _lastSeenTick)
+        else if ((GameplayCVars.FairSenses.Value ? _squad?.WordOf(tick, SquadWordTicks) : _squad?.LastSeen) is { } shared && shared.Tick > _lastSeenTick
+            && tick - shared.Tick <= GiveUpTicks
+            && (!GameplayCVars.FairSenses.Value || Vector3d.Distance(Position, shared.Seer) <= SquadWordMetres * GraphNode.MetreInUnits))
         {
             (_lastKnown, _lastSeenTick) = (shared.Position, shared.Tick);
         }
 
+        // How long he has tracked the player, for his aim: slowly on a man moving fast, and lost soon after he is out of sight.
+        _trackingTicks = seesNow
+            ? _trackingTicks + (TargetHuman?.MetresPerSecond > FastTargetMetresPerSecond ? 0.5 : 1.0)
+            : Math.Max(0.0, _trackingTicks - TrackingLostPerTick);
+
         // A fight over a sound, nobody having seen him: he gives up in time, counted from now, at where he thinks it came from.
         if (_lastSeenTick == 0)
         {
-            (_lastKnown, _lastSeenTick) = (feet, tick);
+            (_lastKnown, _lastSeenTick) = (GameplayCVars.FairSenses.Value && !seesNow && _soundGuess is { } guess ? guess : feet, tick);
         }
 
         Vector3d target = _lastKnown ?? feet;
@@ -233,6 +256,7 @@ public sealed partial class Igi1HumanAi
         // Nobody has seen him for a long while: the fight ends, and the hunt for him follows it (Igi1HumanAi.Search).
         if (tick - _lastSeenTick > GiveUpTicks)
         {
+            _gaveUpTick = tick;
             _huntPlace = _lastKnown;
             EndCombat();
             return true;
@@ -242,10 +266,26 @@ public sealed partial class Igi1HumanAi
         switch (_tactic)
         {
             case TacticPhase.None:
+                // A man in plain view: he shoots first, and sees about a better place after.
+                if (seesNow)
+                {
+                    return ShootFirst(tick, target);
+                }
+
                 return TakePosition(tick, target, "engages") || Advance(tick, target) || Hold(tick, target);
 
             case TacticPhase.Moving:
             case TacticPhase.Advancing:
+                // Called into the fight by a sound or a mate, and here is the man himself: he stops and shoots, the first time.
+                // Not if he is running for cover from fire.
+                if (seesNow && !_shotFirst && !_pendingDown)
+                {
+                    _route.Clear();
+                    DestinationNode = -1;
+                    _movingInCombat = false;
+                    return ShootFirst(tick, target);
+                }
+
                 // The run, as the original's own walks in a fight go: no shooting on the way.
                 _channelWrites.Clear();
                 Combat = default;
@@ -261,6 +301,7 @@ public sealed partial class Igi1HumanAi
                         if (_moveStyle == MoveStyle.Strafe)
                         {
                             TurnTowards(AimPointOf(target, TargetCrouching), 0f, level: true);
+                            FireOnTheMove(tick, target, seesNow);
                         }
                     }
 
@@ -320,7 +361,7 @@ public sealed partial class Igi1HumanAi
                 }
 
                 // Seen where he is down: the place does not hide him from where the player has got to.
-                if (tick - _phaseSince > 10 && tick % 6 == 0 && Exposed(feet, _downLow))
+                if (tick - _phaseSince > 10 && tick % 6 == 0 && Exposed(GameplayCVars.FairSenses.Value && !seesNow ? target : feet, _downLow))
                 {
                     _seenDownUntil[CurrentNode] = tick + SeenDownTicks;
                     if (TakePosition(tick, target, "is seen where he is down: moves"))
@@ -367,6 +408,32 @@ public sealed partial class Igi1HumanAi
         return false;
     }
 
+    // The first sight of him in this fight: he stands and fires from where he is, then thinks of a better place.
+    private bool ShootFirst(int tick, Vector3d target)
+    {
+        _shotFirst = true;
+        Hold(tick, target);
+        _holdUntil = tick + ReactTicks;
+        ModernLog?.Invoke("shoots first");
+        return true;
+    }
+
+    // Strafing with the player in view: short bursts, worse aimed. Run and trigger alone, as the original's Follow fires (0x48C860).
+    private void FireOnTheMove(int tick, Vector3d target, bool seesNow)
+    {
+        // Not in his first steps: his body is still coming out of the standing fire, and would shoot sliding.
+        int intoBurst = (tick - _phaseSince - MoveBurstAfterTicks) % MoveBurstEveryTicks;
+        if (!seesNow || tick - _phaseSince < MoveBurstAfterTicks || intoBurst >= MoveBurstTicks || !FacesForFollowFire(AimPointOf(target, TargetCrouching))
+            || (GameplayCVars.FairFights.Value && _squad is { } squad && !squad.MayFire(this, tick)))
+        {
+            return;
+        }
+
+        Combat = new AiCombatCommand { PullTrigger = true };
+        Target?.Aim(this, AiAimMode.Aiming);
+        HitProbability = _burstHitProbability * MovingAimShare * (GameplayCVars.FairFights.Value ? (float)TrackingShare : 1f);
+    }
+
     // At his firing spot: the original's own fire, a burst or two, then down; on when the player has moved or gone.
     private bool Fire(int tick, Vector3d enemy, Vector3d target, bool seen, bool underFire)
     {
@@ -403,7 +470,30 @@ public sealed partial class Igi1HumanAi
         _suppressingSaid &= suppressing;
         _channelWrites.Clear();
         HoldPosture();
-        RunSharedSubAction(enemy, _weapon!(), suppressing ? AimPointOf(target, TargetCrouching) : null);
+        // Only so many fire at once; the rest keep their aim on him until a turn comes. A burst under way is finished, holding its turn.
+        bool inBurst = _combat!.Phase == AiCombatPhase.Fire;
+        bool holdsFire = GameplayCVars.FairFights.Value && !suppressing && _squad is { } squad
+            && !(inBurst ? squad.StillFiring(this, tick) : squad.MayFire(this, tick));
+        if (holdsFire && inBurst)
+        {
+            CancelFire();
+        }
+
+        if (holdsFire)
+        {
+            Combat = default;
+            TurnTowards(AimPointOf(target, TargetCrouching), 0.034906585f);
+        }
+        else
+        {
+            RunSharedSubAction(enemy, _weapon!(), suppressing ? AimPointOf(target, TargetCrouching) : null);
+        }
+
+        if (GameplayCVars.FairFights.Value)
+        {
+            HitProbability = _burstHitProbability * (float)TrackingShare;
+        }
+
         if (Combat.PressReload || Combat.ReloadWeaponDirectly)
         {
             Say("reload");
@@ -494,7 +584,46 @@ public sealed partial class Igi1HumanAi
         return true;
     }
 
+    /// <summary>How far out a guess from a sound may be, as a share of how far off the sound was, and at the least and most, in metres.</summary>
+    public const double SoundGuessShare = 0.25, SoundGuessLeastMetres = 1.5, SoundGuessMostMetres = 10.0;
+
+    private Vector3d? _soundGuess;
+
+    /// <summary>Gets where he thinks the player is in a fight, for testing.</summary>
+    internal Vector3d? LastKnownForTesting => _lastKnown;
+
+    // Where he thinks a sound came from: somewhere about it, the further off the rougher, on the level it came from.
+    private Vector3d GuessAt(Vector3d place)
+    {
+        double error = Math.Clamp(Vector3d.Distance(Position, place) * SoundGuessShare, SoundGuessLeastMetres * GraphNode.MetreInUnits, SoundGuessMostMetres * GraphNode.MetreInUnits);
+        double way = _random.NextDouble() * 2.0 * Math.PI, how = error * Math.Sqrt(_random.NextDouble());
+        return new Vector3d(place.X + (Math.Cos(way) * how), place.Y + (Math.Sin(way) * how), place.Z);
+    }
+
     private bool _pendingDown;
+    private double _trackingTicks;
+    private float _burstHitProbability = 1f;
+
+    /// <summary>How long a soldier tracks a man to aim his best, in ticks.</summary>
+    public const double FullTrackingTicks = 3 * 30;
+
+    /// <summary>What share of his aim he has at first, tracking no one yet.</summary>
+    public const double FirstAimShare = 0.25;
+
+    /// <summary>How fast he loses his tracking once the man is out of sight, in ticks of tracking a tick.</summary>
+    public const double TrackingLostPerTick = 3.0;
+
+    /// <summary>Above this speed, in metres a second, a man takes twice as long to track.</summary>
+    public const double FastTargetMetresPerSecond = 3.0;
+
+    /// <summary>Gets the share of his hit chance a soldier has now, from how long he has tracked his man.</summary>
+    public double TrackingShare => FirstAimShare + ((1.0 - FirstAimShare) * Math.Min(1.0, _trackingTicks / FullTrackingTicks));
+
+    /// <summary>How far a squad mate can tell him where the player is, in metres, and how long the telling takes, in ticks.</summary>
+    public const double SquadWordMetres = 30.0;
+
+    /// <summary>How long a word from a squad mate takes to reach him, in ticks.</summary>
+    public const int SquadWordTicks = 15;
 
     private void StartFiring(int tick)
     {
@@ -626,6 +755,9 @@ public sealed partial class Igi1HumanAi
         (int, int, bool)? best = null;
         double bestScore = double.MaxValue;
         double nowRange = Flat(Position, target);
+
+        // With the player in view a long run costs more: he is being shot at, or could be shooting.
+        double walkCost = _lastTick - _lastSeenTick < 30 ? WalkCostInView : WalkCost;
         foreach (GraphNode node in _graph!.Nodes)
         {
             double away = Vector3d.Distance(Position, node.Position);
@@ -645,7 +777,7 @@ public sealed partial class Igi1HumanAi
 
             // Cheap first: what the place would cost him, before any sight line is cast.
             double crowd = others.Count(o => Flat(o, node.Position) < SpacingMetres * metre);
-            double score = (away / metre * 0.6) + (Math.Abs(range / metre - PreferredRangeMetres) * 0.4) + (crowd * 15.0);
+            double score = (away / metre * walkCost) + (Math.Abs(range / metre - PreferredRangeMetres) * 0.4) + (crowd * 15.0);
             if (squadBearing is { } bearing)
             {
                 double nx = node.Position.X - target.X, ny = node.Position.Y - target.Y, nl = Math.Sqrt((nx * nx) + (ny * ny));
@@ -780,9 +912,12 @@ public sealed partial class Igi1HumanAi
     private void ForgetTactics()
     {
         _tactic = TacticPhase.None;
+        _shotFirst = false;
         (_fireNode, _downNode, _downLow) = (-1, -1, false);
         _lastKnown = null;
         _lastSeenTick = 0;
+        _soundGuess = null;
+        _trackingTicks = 0.0;
         _pendingDown = false;
         _seenDownUntil.Clear();
         (_suppression, _grenadeAsked) = (0.0, -1);

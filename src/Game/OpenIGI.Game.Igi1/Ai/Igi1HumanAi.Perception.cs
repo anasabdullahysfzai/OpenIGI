@@ -186,6 +186,13 @@ public sealed partial class Igi1HumanAi
             return false;
         }
 
+        // A sound tells him about where, not where: he goes on his guess until he sees for himself.
+        if (GameplayCVars.ModernAi.Value && GameplayCVars.FairSenses.Value && shooter == AiDetectionCandidate.PlayerId)
+        {
+            shotPosition = GuessAt(shotPosition);
+            _soundGuess = shotPosition;
+        }
+
         bool posted = Events.Post(
             new AiEventRecord(AiEvent.Gunshot, -1, AiEventFilter.None, (float)range, shotPosition, shooter, shooter),
             owner: RuntimeId,
@@ -684,6 +691,14 @@ public sealed partial class Igi1HumanAi
 
         double distance = Vector3d.Distance(Position, alerterPosition);
         if (distance > radiusInUnits)
+        {
+            return false;
+        }
+
+        // The modern AI: he gave up, and a mate's ping tells him nothing new. Two who have lost the player would otherwise restart each
+        // other's fights for ever. Only the ping: a mate's shot (a wider reach) is news of its own.
+        if (radiusInUnits <= AlertPingRadiusInUnits && _gaveUpTick >= 0 && _lastTick - _gaveUpTick < OnEdgeTicks
+            && (_squad?.LastSeen?.Tick ?? -1) <= _gaveUpTick)
         {
             return false;
         }

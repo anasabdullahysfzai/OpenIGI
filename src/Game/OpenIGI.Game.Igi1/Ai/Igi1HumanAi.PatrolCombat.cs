@@ -689,6 +689,7 @@ public sealed partial class Igi1HumanAi
         if (command.StartedBurst is { } burst)
         {
             HitProbability = burst.HitProbability;
+            _burstHitProbability = burst.HitProbability;
         }
 
         if (command.Aim is { } mode && Target is not null)

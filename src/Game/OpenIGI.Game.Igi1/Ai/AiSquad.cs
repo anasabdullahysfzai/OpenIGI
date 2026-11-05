@@ -84,8 +84,65 @@ public sealed class AiSquad
     /// <summary>How long a node stays taken by a soldier searching from it, in ticks.</summary>
     public const int SearchNodeTicks = 30 * 30;
 
-    /// <summary>Gets where the player was last seen by any member, and when; null before anyone has seen him.</summary>
-    public (Vector3d Position, int Tick)? LastSeen { get; private set; }
+    /// <summary>Gets where the player was last seen by any member, when, and where that member stood; null before anyone has seen him.</summary>
+    public (Vector3d Position, int Tick, Vector3d Seer)? LastSeen { get; private set; }
+
+    private readonly Dictionary<Igi1HumanAi, (int Until, int RestUntil)> _firing = [];
+
+    /// <summary>How many may fire at the player at once.</summary>
+    public const int MostFiring = 3;
+
+    /// <summary>How long a member keeps his turn to fire, and how long after it others come first, in ticks.</summary>
+    public const int FireTurnTicks = 5 * 30, FireRestTicks = 1 * 30;
+
+    /// <summary>Whether a member may fire now: on his turn, or there is one free and he has rested since his last.</summary>
+    /// <param name="soldier">The soldier.</param>
+    /// <param name="tick">The tick.</param>
+    /// <returns>Whether he may.</returns>
+    public bool MayFire(Igi1HumanAi soldier, int tick)
+    {
+        if (_firing.TryGetValue(soldier, out (int Until, int RestUntil) turn))
+        {
+            if (tick < turn.Until)
+            {
+                return true;
+            }
+
+            if (tick < turn.RestUntil)
+            {
+                return false;
+            }
+        }
+
+        if (_firing.Values.Count(t => tick < t.Until) >= MostFiring)
+        {
+            return false;
+        }
+
+        _firing[soldier] = (tick + FireTurnTicks, tick + FireTurnTicks + FireRestTicks);
+        return true;
+    }
+
+    /// <summary>Keeps a member's turn while his burst runs on past it, so a new one does not start beside him.</summary>
+    /// <param name="soldier">The soldier.</param>
+    /// <param name="tick">The tick.</param>
+    /// <returns>Whether he may fire on: false for a burst begun without a turn, with none now free.</returns>
+    public bool StillFiring(Igi1HumanAi soldier, int tick)
+    {
+        (int until, int rest) = _firing.GetValueOrDefault(soldier, (int.MinValue, int.MinValue));
+        if (tick >= until)
+        {
+            return MayFire(soldier, tick);
+        }
+
+        _firing[soldier] = (Math.Max(until, tick + 1), Math.Max(rest, tick + 1 + FireRestTicks));
+        return true;
+    }
+
+    /// <summary>Gets how many hold a turn to fire now, for testing.</summary>
+    /// <param name="tick">The tick.</param>
+    /// <returns>How many.</returns>
+    public int FiringNow(int tick) => _firing.Values.Count(t => tick < t.Until);
 
     /// <summary>Notes that a soldier fights this tick, where he stands or is going.</summary>
     /// <param name="soldier">The soldier.</param>
@@ -94,7 +151,31 @@ public sealed class AiSquad
     public void Fight(Igi1HumanAi soldier, Vector3d position, int tick) => _members[soldier] = (position, tick);
 
     /// <summary>Notes that a member sees the player.</summary>
-    public void Saw(Vector3d feet, int tick) => LastSeen = (feet, tick);
+    /// <param name="feet">Where the player stands.</param>
+    /// <param name="tick">The tick.</param>
+    /// <param name="seer">Where the member stands.</param>
+    public void Saw(Vector3d feet, int tick, Vector3d seer)
+    {
+        LastSeen = (feet, tick, seer);
+        _words.Enqueue((feet, tick, seer));
+    }
+
+    private readonly Queue<(Vector3d Position, int Tick, Vector3d Seer)> _words = new();
+    private (Vector3d Position, int Tick, Vector3d Seer)? _word;
+
+    /// <summary>Gets the latest word of where the player was that has had time to be passed on; null before there is one.</summary>
+    /// <param name="tick">The tick.</param>
+    /// <param name="delay">How long a word takes to pass, in ticks.</param>
+    /// <returns>Where he was, when, and where the one who saw him stood.</returns>
+    public (Vector3d Position, int Tick, Vector3d Seer)? WordOf(int tick, int delay)
+    {
+        while (_words.TryPeek(out (Vector3d Position, int Tick, Vector3d Seer) word) && tick - word.Tick >= delay)
+        {
+            _word = _words.Dequeue();
+        }
+
+        return _word;
+    }
 
     /// <summary>Gets the places of the other members fighting now.</summary>
     /// <param name="soldier">The soldier asking.</param>

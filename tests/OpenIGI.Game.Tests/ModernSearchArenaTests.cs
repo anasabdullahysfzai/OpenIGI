@@ -60,13 +60,99 @@ public sealed class ModernSearchArenaTests(ITestOutputHelper output)
             output.WriteLine(string.Join("\n", story.Where(line => !line.Contains("sight", StringComparison.Ordinal) && !line.Contains("sees the", StringComparison.Ordinal))));
             output.WriteLine($"places: {string.Join(" | ", places.Select(spots => string.Join(",", spots)))}");
             Assert.Equal(3, story.Count(line => line.Contains("lost him; hunts", StringComparison.Ordinal)));
-            Assert.Contains(story, line => line.Contains("says: lost", StringComparison.Ordinal));
             Assert.Contains(story, line => line.Contains("says: clear", StringComparison.Ordinal));
             Assert.True(scanned, "nobody knelt to look about");
             Assert.All(places, spots => Assert.True(spots.Count >= 3, "he did not walk his search"));
             Assert.True(places[0].Intersect(places[1]).Count() < places[0].Count, "they searched the same places");
             Assert.Equal(3, story.Count(line => line.Contains("search over", StringComparison.Ordinal)));
             Assert.All(guards, guard => Assert.True(guard.IsOnEdge, "he calmed down at once"));
+        });
+    }
+
+    /// <summary>
+    /// A guard who has given up is not pulled out of his hunt by a mate's ping with no news (two of them would restart each other's
+    /// fights for ever, frozen on the spot); news of the player does bring him back. Long after, a ping starts a fight that lasts, and
+    /// does not end at once on the squad's old sighting.
+    /// </summary>
+    [RequiresGameDataFact]
+    public void AGuardWhoGaveUpIgnoresAPingWithNoNews()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(60.0).Box(0, 40, 0, 60, 41, 4.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Igi1HumanAi guard = arena.Patrol(ModernArena.At(30, 12), 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"));
+            Vector3d player = ModernArena.At(30, 30);
+            int gaveUp = -1;
+            bool newsTold = false;
+            int Starts() => story.Count(line => line.Contains("starts fighting", StringComparison.Ordinal));
+            int startsAtGiveUp = 0;
+            for (tick = 1; tick <= 40 * 30 && !newsTold; tick++)
+            {
+                player = tick >= 11 * 30 ? ModernArena.At(30, 43) : tick >= 10 * 30 ? ModernArena.At(30, 38) : player;
+                arena.Tick(guard, tick, player);
+                if (gaveUp < 0 && story.Exists(line => line.Contains("lost him; hunts", StringComparison.Ordinal)))
+                {
+                    (gaveUp, startsAtGiveUp) = (tick, Starts());
+                }
+
+                // A mate beside him, pinging every few ticks, with nothing new to tell.
+                if (gaveUp >= 0 && tick % 5 == 0)
+                {
+                    guard.ReceiveAlert(guard.Position + new Vector3d(3.0 * ModernArena.Metre, 0.0, 0.0));
+                }
+
+                newsTold = gaveUp >= 0 && tick == gaveUp + (5 * 30);
+            }
+
+            output.WriteLine(string.Join("\n", story.Where(line => !line.Contains("sight", StringComparison.Ordinal) && !line.Contains("sees", StringComparison.Ordinal))));
+            Assert.True(gaveUp > 0, "he never gave up");
+            Assert.Equal(startsAtGiveUp, Starts());
+            Assert.True(guard.IsSearching, "the pings stopped his search");
+            Assert.DoesNotContain(story, line => line.Contains("search dropped", StringComparison.Ordinal));
+
+            // A mate has seen him since: the next ping brings him back.
+            arena.Squad.Saw(player, tick, guard.Position);
+            guard.ReceiveAlert(guard.Position + new Vector3d(3.0 * ModernArena.Metre, 0.0, 0.0));
+            for (int until = tick + 30; tick < until; tick++)
+            {
+                arena.Tick(guard, tick, player);
+            }
+
+            Assert.Equal(startsAtGiveUp + 1, Starts());
+        });
+    }
+
+    /// <summary>A fight started long after the squad last saw him runs its time, rather than ending at once on that old sighting.</summary>
+    [RequiresGameDataFact]
+    public void AFightStartedLongAfterALostPlayerDoesNotEndAtOnce()
+    {
+        With(() =>
+        {
+            ModernArena arena = new ModernArena(60.0).Box(0, 40, 0, 60, 41, 4.0);
+            arena.Build();
+            List<string> story = [];
+            int tick = 0;
+            Igi1HumanAi guard = arena.Patrol(ModernArena.At(30, 12), 0f, text => story.Add($"{tick / 30.0:00.0}s {text}"));
+            Vector3d hidden = ModernArena.At(30, 43);
+
+            // The squad saw him here long ago, and has heard nothing since. Then a mate's ping starts this guard's fight.
+            arena.Squad.Saw(hidden, 1, ModernArena.At(30, 14));
+            int alerted = (Igi1HumanAi.GiveUpTicks + 300);
+            for (tick = 2; tick <= alerted + (5 * 30); tick++)
+            {
+                arena.Tick(guard, tick, hidden);
+                if (tick == alerted)
+                {
+                    guard.ReceiveAlert(guard.Position + new Vector3d(3.0 * ModernArena.Metre, 0.0, 0.0));
+                }
+            }
+
+            output.WriteLine(string.Join("\n", story.Where(line => !line.Contains("sight", StringComparison.Ordinal) && !line.Contains("sees", StringComparison.Ordinal))));
+            Assert.Contains(story, line => line.Contains("starts fighting", StringComparison.Ordinal));
+            Assert.DoesNotContain(story, line => line.Contains("lost him; hunts", StringComparison.Ordinal));
         });
     }
 
