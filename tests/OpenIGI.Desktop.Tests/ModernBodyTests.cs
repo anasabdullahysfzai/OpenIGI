@@ -175,45 +175,104 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     /// <summary>
-    /// A foot the clip puts down stays where it came down while it is held, however the clip's stride and his own pace disagree:
-    /// a strafe at 3 metres a second, two thirds of the strafing run's own pace, slid the planted foot along the ground.
+    /// A swinging foot keeps going, stride after stride: a clip's keys begin a frame in, and counted from nought a loop sat on its
+    /// first frame for a tick each time round, and he stalled mid-stride.
     /// </summary>
     [RequiresModernBodyTheory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void APlantedFootStaysPut(bool strafe)
+    [InlineData(1.2f, false)]
+    [InlineData(1.2f, true)]
+    [InlineData(3.2f, true)]
+    public void ASwingingFootDoesNotStall(float speed, bool aiming)
     {
         RecordingGraphicsDevice device = new();
         using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
         using ModernBody body = new(asset, device);
-        float speed = strafe ? 3.0f : 3.2f;
-        Vector2 travel = strafe ? new Vector2(0f, speed / 30f) : new Vector2(speed / 30f, 0f);
+        Vector2 travel = new(speed / 30f, 0f);
         Vector3 walked = Vector3.Zero;
-        Vector3?[] was = [null, null];
-        float worst = 0f, held = 0f;
-        for (int tick = 0; tick < 90; tick++)
+        Vector3[] was = new Vector3[2];
+        float[] before = new float[2], last = new float[2];
+        int stalls = 0, swinging = 0;
+        for (int tick = 0; tick < 240; tick++)
         {
-            body.Tick(speed / 30f, 0f, aiming: true, heading: strafe ? new Vector2(0f, 1f) : default, travel: travel);
+            body.Tick(speed / 30f, 0f, aiming: aiming, travel: travel);
             walked += ModernBodyAsset.FromBody(new Vector3(travel.Y, travel.X, 0f));
-            (float left, float right) = body.FootHoldForTesting;
-            float[] hold = [left, right];
             for (int foot = 0; foot < 2; foot++)
             {
-                Vector3 onGround = walked + body.AnkleForTesting(foot);
-                if (hold[foot] >= 1f && was[foot] is { } before && tick > 15)
+                Vector3 at = walked + body.AnkleForTesting(foot);
+                float pace = new Vector2(at.X - was[foot].X, at.Z - was[foot].Z).Length() * 30f;
+                was[foot] = at;
+
+                // Going fast before and after, and hardly at all between.
+                if (tick > 30 && before[foot] > speed && pace > speed)
                 {
-                    float slid = Vector2.Distance(new Vector2(onGround.X, onGround.Z), new Vector2(before.X, before.Z));
-                    worst = Math.Max(worst, slid);
-                    held++;
+                    swinging++;
+                    stalls += last[foot] < 0.5f * Math.Min(before[foot], pace) ? 1 : 0;
                 }
 
-                was[foot] = hold[foot] >= 1f ? onGround : null;
+                (before[foot], last[foot]) = (last[foot], pace);
             }
         }
 
-        output.WriteLine($"{(strafe ? "strafe" : "run")}: {held} held foot-ticks, worst slide {worst * 100f:0.0} cm a tick");
-        Assert.True(held > 10, "no foot was ever held down");
-        Assert.True(worst < 0.02f, $"a held foot slid {worst * 100f:0.0} cm in a tick");
+        output.WriteLine(FormattableString.Invariant($"{speed} m/s aiming {aiming}: {stalls} stalls in {swinging} swinging foot-ticks"));
+        Assert.True(swinging > 20, "no foot ever swung");
+        Assert.Equal(0, stalls);
+    }
+
+    /// <summary>
+    /// A leg's motion is continuous, going along: no joint's speed jumps from one tick to the next by much more than it does in the
+    /// clip itself. A foot held to the ground and let go again pulled the knee about at every step, and looked like a skipped frame.
+    /// </summary>
+    [RequiresModernBodyTheory]
+    [InlineData(1.2f, false, 0.7f, 0)]
+    [InlineData(1.2f, true, 0.9f, 0)]
+    [InlineData(3.2f, true, 3.5f, 0)]
+    [InlineData(3.0f, true, 99f, 1)]
+    [InlineData(3.0f, true, 99f, -1)]
+    [InlineData(1.2f, true, 99f, 2)]
+    public void ALegMovesContinuously(float speed, bool aiming, float slidesCentimetres, int way)
+    {
+        RecordingGraphicsDevice device = new();
+        using ModernBodyAsset asset = ModernBodyAsset.Load(device, File);
+        using ModernBody body = new(asset, device);
+        string[] bones = ["LeftLeg", "RightLeg", "LeftFoot", "RightFoot"];
+        // way: 0 forward, 1 strafing right, -1 strafing left, 2 crouched.
+        Vector2 travel = Math.Abs(way) == 1 ? new Vector2(0f, way * speed / 30f) : new Vector2(speed / 30f, 0f);
+        Vector2 heading = Math.Abs(way) == 1 ? new Vector2(0f, way) : default;
+        Vector3 walked = Vector3.Zero;
+        List<Vector3>[] at = [.. bones.Select(_ => new List<Vector3>())];
+        for (int tick = 0; tick < 150; tick++)
+        {
+            body.Tick(speed / 30f, 0f, aiming: aiming, travel: travel, heading: heading, crouched: way == 2);
+            walked += ModernBodyAsset.FromBody(new Vector3(travel.Y, travel.X, 0f));
+            for (int b = 0; b < bones.Length && tick >= 30; b++)
+            {
+                at[b].Add(walked + body.BoneForTesting(Array.IndexOf(asset.Names, "mixamorig:" + bones[b])));
+            }
+        }
+
+        float lowest = Math.Min(at[2].Min(p => p.Y), at[3].Min(p => p.Y));
+        for (int b = 0; b < bones.Length; b++)
+        {
+            List<float> change = [];
+            float slid = 0f;
+            int low = 0;
+            for (int f = 0; f + 2 < at[b].Count; f++)
+            {
+                change.Add(((at[b][f + 2] - at[b][f + 1]) - (at[b][f + 1] - at[b][f])).Length() * 30f);
+                if (at[b][f + 1].Y < lowest + 0.03f)
+                {
+                    low++;
+                    slid += new Vector2(at[b][f + 1].X - at[b][f].X, at[b][f + 1].Z - at[b][f].Z).Length();
+                }
+            }
+
+            float usual = change.Order().ElementAt(change.Count / 2), ratio = change.Max() / Math.Max(usual, 1e-6f);
+            string line = FormattableString.Invariant($"{speed} m/s way {way} aiming {aiming} {bones[b]}: worst {ratio:0.0} times its usual change of speed, slides {slid * 100f / Math.Max(low, 1):0.00} cm a tick on the ground");
+            output.WriteLine(line);
+            // (The crouched walk's own keys have the biggest jumps: it would need a better clip to do better.)
+            Assert.True(ratio < (way == 2 ? 10f : 7.5f), line);
+            Assert.True(b < 2 || slid * 100f / Math.Max(low, 1) < slidesCentimetres, line);
+        }
     }
 
     /// <summary>

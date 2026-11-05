@@ -532,7 +532,9 @@ internal sealed class ModernBody : IDisposable
             }
         }
 
-        LockFeet(travel, turning * TickSeconds, kneeling || _act is not null);
+        // Only turning on the spot: going along, the clip's own feet keep to the ground at his pace, to under half a centimetre a tick at a
+        // walk, and the leg pulled to a held foot and let go again was a hitch in the knee and the foot at every step, twice what the clip has.
+        LockFeet(travel, turning * TickSeconds, kneeling || moving || _act is not null);
 
         // Drawn every frame (DrawAt), the tick only poses: skinning here too was thrown away by the next frame, and landed on
         // the tick's frame all at once -- a frame in three twice as long as the others, a hitch thirty times a second. Where no

@@ -364,6 +364,15 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <summary>Gets the stagger of a man blinded by a flashbang, played once (<c>flash_stagger</c>), or none where the file has none.</summary>
     public ModernClip FlashStagger { get; private set; } = ModernClip.None;
 
+    /// <summary>Gets the setting off into a run, and the stops from one planting either foot, played once, or none where the file has none.</summary>
+    public ModernClip RunStart { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="RunStart"/>
+    public ModernClip RunStopLeft { get; private set; } = ModernClip.None;
+
+    /// <inheritdoc cref="RunStart"/>
+    public ModernClip RunStopRight { get; private set; } = ModernClip.None;
+
     /// <summary>Gets the lean out from cover, to his left and to his right (<c>lean_left</c>, <c>lean_right</c>), or none where the file has none.</summary>
     public ModernClip LeanLeft { get; private set; } = ModernClip.None;
 
@@ -603,6 +612,9 @@ internal sealed class ModernBodyAsset : IDisposable
             model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
                 ? ModernClip.ReadFall(clip, index, asset.Rest.Length, up)
                 : null;
+        asset.RunStart = Fall("run_start") ?? ModernClip.None;
+        asset.RunStopLeft = Fall("run_stop_left") ?? ModernClip.None;
+        asset.RunStopRight = Fall("run_stop_right") ?? ModernClip.None;
         foreach ((int side, int head, string name) in new[] { (0, 0, "death_short_front"), (1, 0, "death_short_back"), (0, 1, "death_short_front_head"), (1, 1, "death_short_back_head") })
         {
             asset.ShortDeaths[side, head] = Fall(name);
@@ -1062,6 +1074,7 @@ internal sealed class ModernClip
     private ICurveSampler<Vector3>?[] _translations = [];
     private ICurveSampler<Quaternion>?[] _rotations = [];
     private ICurveSampler<Vector3>?[] _scales = [];
+    private float _start;
     private Vector3 _travel;
     private Vector3 _up;
     private bool _falls;
@@ -1089,9 +1102,13 @@ internal sealed class ModernClip
     /// <returns>The clip.</returns>
     public static ModernClip Read(GltfAnimation animation, Dictionary<Node, int> index, int nodes, bool travelling)
     {
+        // A clip's keys begin a frame in (as the build's export has them), so its length is from its first key. Counted from nought, a
+        // loop sat on its first frame for a thirtieth of a second each time round: he stalled, mid-stride, once a stride.
+        float start = animation.Channels.Min(FirstKey);
         ModernClip clip = new()
         {
-            Duration = Math.Max(animation.Duration, 1e-3f),
+            _start = start,
+            Duration = Math.Max(animation.Duration - start, 1e-3f),
             _translations = new ICurveSampler<Vector3>?[nodes],
             _rotations = new ICurveSampler<Quaternion>?[nodes],
             _scales = new ICurveSampler<Vector3>?[nodes],
@@ -1127,12 +1144,21 @@ internal sealed class ModernClip
         // and taking it out at an even pace leaves the stride's bob and sway where they are.
         if (travelling && clip.TravelNode >= 0 && clip._translations[clip.TravelNode] is { } root)
         {
-            clip._travel = root.GetPoint(clip.Duration) - root.GetPoint(0f);
+            clip._travel = root.GetPoint(start + clip.Duration) - root.GetPoint(start);
         }
 
-        clip.Bake();
+        clip.Bake(smooth: travelling);
         return clip;
     }
+
+    // When a channel's first key is.
+    private static float FirstKey(AnimationChannel channel) => channel.TargetNodePath switch
+    {
+        PropertyPath.translation => channel.GetTranslationSampler().GetLinearKeys().First().Key,
+        PropertyPath.rotation => channel.GetRotationSampler().GetLinearKeys().First().Key,
+        PropertyPath.scale => channel.GetScaleSampler().GetLinearKeys().First().Key,
+        _ => 0f,
+    };
 
     /// <summary>How many frames a second a clip is baked at, for sampling.</summary>
     public const int BakedFramesPerSecond = 60;
@@ -1142,7 +1168,7 @@ internal sealed class ModernClip
 
     // Every node's curves sampled once at a fixed rate, so a pose is two array reads and a blend a node, not a key search in
     // each curve -- and safe for several bodies to read at once.
-    private void Bake()
+    private void Bake(bool smooth)
     {
         int frames = (int)MathF.Ceiling(Duration * BakedFramesPerSecond) + 1;
         _bakedT = new Vector3[]?[_translations.Length];
@@ -1150,10 +1176,72 @@ internal sealed class ModernClip
         _bakedS = new Vector3[]?[_scales.Length];
         for (int node = 0; node < _rotations.Length; node++)
         {
-            _bakedT[node] = _translations[node] is { } t ? [.. Enumerable.Range(0, frames).Select(f => t.GetPoint(Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
-            _bakedR[node] = _rotations[node] is { } r ? [.. Enumerable.Range(0, frames).Select(f => r.GetPoint(Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
-            _bakedS[node] = _scales[node] is { } sc ? [.. Enumerable.Range(0, frames).Select(f => sc.GetPoint(Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+            _bakedT[node] = _translations[node] is { } t ? [.. Enumerable.Range(0, frames).Select(f => t.GetPoint(_start + Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+            _bakedR[node] = _rotations[node] is { } r ? [.. Enumerable.Range(0, frames).Select(f => r.GetPoint(_start + Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+            _bakedS[node] = _scales[node] is { } sc ? [.. Enumerable.Range(0, frames).Select(f => sc.GetPoint(_start + Math.Min(Duration, f / (float)BakedFramesPerSecond)))] : null;
+            if (smooth)
+            {
+                SmoothLoop(_bakedR[node]);
+                SmoothLoop(_bakedT[node]);
+            }
         }
+    }
+
+    // A loop's curve over some thirty milliseconds either way, round the loop: a mocap clip's keys carry a little noise from frame to
+    // frame, which reads as a hitch in a leg swinging fast.
+    private static readonly float[] LoopKernel = [1f / 16f, 4f / 16f, 6f / 16f, 4f / 16f, 1f / 16f];
+
+    private static void SmoothLoop(Quaternion[]? keys)
+    {
+        if (keys is null || keys.Length < 6)
+        {
+            return;
+        }
+
+        int count = keys.Length - 1; // the last frame is the first again
+        Quaternion[] was = [.. keys];
+        for (int f = 0; f < count; f++)
+        {
+            Vector4 sum = Vector4.Zero;
+            for (int k = 0; k < LoopKernel.Length; k++)
+            {
+                Quaternion q = was[(f + k - 2 + count) % count];
+                sum += new Vector4(q.X, q.Y, q.Z, q.W) * (Quaternion.Dot(q, was[f]) < 0f ? -LoopKernel[k] : LoopKernel[k]);
+            }
+
+            keys[f] = Quaternion.Normalize(new Quaternion(sum.X, sum.Y, sum.Z, sum.W));
+        }
+
+        keys[count] = keys[0];
+    }
+
+    private static void SmoothLoop(Vector3[]? keys)
+    {
+        if (keys is null || keys.Length < 6)
+        {
+            return;
+        }
+
+        // Only a curve that closes: a root that travels is not a loop, its first and last far apart.
+        int count = keys.Length - 1;
+        if (Vector3.Distance(keys[0], keys[count]) > 1f)
+        {
+            return;
+        }
+
+        Vector3[] was = [.. keys];
+        for (int f = 0; f < count; f++)
+        {
+            Vector3 sum = Vector3.Zero;
+            for (int k = 0; k < LoopKernel.Length; k++)
+            {
+                sum += was[(f + k - 2 + count) % count] * LoopKernel[k];
+            }
+
+            keys[f] = sum;
+        }
+
+        keys[count] = keys[0];
     }
 
     /// <summary>Reads a fall: played once and held, its root's slide along the ground taken out and its drop kept.</summary>
@@ -1208,7 +1296,7 @@ internal sealed class ModernClip
             return Vector3.Zero;
         }
 
-        Vector3 moved = root.GetPoint(Wrap(time)) - root.GetPoint(0f);
+        Vector3 moved = root.GetPoint(_start + Wrap(time)) - root.GetPoint(_start);
         return moved - (Vector3.Dot(moved, _up) * _up);
     }
 

@@ -349,6 +349,12 @@ public sealed partial class SoldierRenderer
             body.Gesture(forced == "body_check" ? asset.BodyCheck : asset.HandSignal);
         }
 
+        // run_start, run_stop_left, run_stop_right: once each time it is set, on the spot.
+        if (fresh && forced is "run_start" or "run_stop_left" or "run_stop_right")
+        {
+            body.Act(forced == "run_start" ? asset.RunStart : forced == "run_stop_left" ? asset.RunStopLeft : asset.RunStopRight);
+        }
+
         // limp_walk_left and the rest: limping on the spot at the clip's own pace.
         if (forced.StartsWith("limp_", StringComparison.Ordinal))
         {
@@ -400,7 +406,7 @@ public sealed partial class SoldierRenderer
             "look_right" => new Vector3(MathF.Sin(MathF.PI / 3f), MathF.Cos(MathF.PI / 3f), 0f),
             _ => default,
         };
-        aiming |= forced is "aim_up" or "lean_left" or "lean_right";
+        aiming |= forced is "aim_up" or "lean_left" or "lean_right" or "run_start" or "run_stop_left" or "run_stop_right";
         float forcedRaise = Raise(member, member.Agent.View);
         _modernStandingHeights[member] = member.TickWhere.Z + forcedRaise; // the height a fall from this pose starts at
         body.Tick(moved, yaw, forcedRaise, aiming, shots, kneeling: forced is "kneel" or "kneel_aim" or "kneel_scan", keepsDown: forced == "kneel", turning: turning, travel: travel, look: look, scanning: forced == "kneel_scan", lean: forced == "lean_left" ? -1 : forced == "lean_right" ? 1 : 0);
