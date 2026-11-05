@@ -71,6 +71,7 @@ public sealed partial class GameHost
         RegisterCameraCommands(state.Console.System);
         RegisterTestSpotCommands(state.Console.System);
         RegisterTestRangeCommands(state.Console.System);
+        RegisterEditorCommands(state.Console.System);
         RegisterRendererSwitchCommand(state.Console.System);
         _contentLayers.Register(state.Console.System);
         _memory.Register(state.Console.System);
@@ -370,6 +371,9 @@ public sealed partial class GameHost
         _mission.PlayerInWalk = false;
         _mission.Terrain = null;
         _mission.Ground = null;
+        _mission.Models = null;
+        _mission.Animators = null;
+        _mission.AnimationFiles = null;
 
         // The material table, shared with the guard-round handler so an AI round's impact can leave the
         // same mark a player's does -- retail rounds are physical and decal whatever they meet (10.4).
@@ -697,11 +701,20 @@ public sealed partial class GameHost
                         _menuFlow.PendingPreviewMissionId = null;
                     }
                 },
-                saveSettings: () => state.Console.SaveSettings(),
+                saveSettings: () =>
+                {
+                    if (_options.SavesUserFiles)
+                    {
+                        state.Console.SaveSettings();
+                    }
+                },
                 saveProfiles: () =>
                 {
                     RestoreTitleInputBindings();
-                    HostConfiguration.Save(_configuration, _logger);
+                    if (_options.SavesUserFiles)
+                    {
+                        HostConfiguration.Save(_configuration, _logger);
+                    }
                 },
                 captureThumbnail: (out captureWidth, out captureHeight) =>
                 {
@@ -721,7 +734,8 @@ public sealed partial class GameHost
                 displayResolutions: DisplayResolutions,
                 playedMods: () => _titleRuntime.Mods,
                 coop: _coop,
-                touchScreen: () => _window.Input.Touch.InUse);
+                touchScreen: () => _window.Input.Touch.InUse,
+                openEditor: EditorFactory is null ? null : RequestEditor);
 
             state.ShellHostForEntryCam = state.ShellHost;
             if (_coop is not null)
