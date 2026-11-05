@@ -129,6 +129,56 @@ public sealed class ModernPatrolArenaTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>A round in the leg slows him for good, and tells which leg; a round elsewhere does not, nor one with the modern AI off.</summary>
+    [RequiresGameDataFact]
+    public void AGuardShotInTheLegLimpsForGood()
+    {
+        bool previous = GameplayCVars.ModernAi.Value;
+        GameplayCVars.ModernAi.Value = true;
+        try
+        {
+            (ModernArena arena, Igi1HumanAi guard) = Walker(seed: 14);
+            double Usual(int from, int to)
+            {
+                List<double> paces = [];
+                for (int tick = from; tick < to; tick++)
+                {
+                    Vector3d before = guard.Position;
+                    arena.Tick(guard, tick, ModernArena.At(15, 28));
+                    double moved = Vector3d.Distance(before, guard.Position);
+                    if (moved > 1.0)
+                    {
+                        paces.Add(moved * 30.0 / ModernArena.Metre);
+                    }
+                }
+
+                paces.Sort();
+                return paces[paces.Count / 2];
+            }
+
+            double whole = Usual(1, 300);
+            guard.WoundLeg(12);
+            Assert.Equal(0, guard.LimpLeg);
+            guard.WoundLeg(8);
+            Assert.Equal(-1, guard.LimpLeg);
+            guard.WoundLeg(0);
+            Assert.Equal(1, guard.LimpLeg);
+            double hurt = Usual(300, 900);
+            output.WriteLine($"usually {whole} m/s whole, {hurt} m/s wounded");
+            Assert.True(whole > Igi1HumanAi.LimpWalkMetresPerSecond + 0.1, $"he walked only {whole} m/s before");
+            Assert.InRange(hurt, 0.5, Igi1HumanAi.LimpWalkMetresPerSecond + 0.01);
+
+            GameplayCVars.ModernAi.Value = false;
+            (_, Igi1HumanAi original) = Walker(seed: 14);
+            original.WoundLeg(8);
+            Assert.Equal(0, original.LimpLeg);
+        }
+        finally
+        {
+            GameplayCVars.ModernAi.Value = previous;
+        }
+    }
+
     /// <summary>On patrol his sight turns with his head: the eye a sweep tests against leaves his facing, both ways.</summary>
     [RequiresGameDataFact]
     public void HisSightTurnsWithHisGaze()

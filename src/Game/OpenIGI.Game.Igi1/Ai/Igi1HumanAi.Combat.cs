@@ -220,6 +220,19 @@ public sealed partial class Igi1HumanAi
     /// <param name="zone">The zone the hit struck — <c>Human+744</c>, which names the flinch clip.</param>
     public void Flinch(int zone) => _flinchZone = zone;
 
+    /// <summary>Gets the leg a round has wounded, which he limps on for as long as he lives: -1 his left, 1 his right, 0 neither. <b>Not retail.</b></summary>
+    public int LimpLeg { get; private set; }
+
+    /// <summary>Notes where a round struck him: with the modern AI, a leg it struck is one he limps on.</summary>
+    /// <param name="zone">The zone it struck.</param>
+    public void WoundLeg(int zone)
+    {
+        if (GameplayCVars.ModernAi.Value && HumanDamage.LegOf(zone) is not 0 and var leg)
+        {
+            LimpLeg = leg;
+        }
+    }
+
     // The zone of this tick's flinching hit, or -1: machine+8's 0x10000 bit with Human+744 beside it.
     private int _flinchZone = -1;
 

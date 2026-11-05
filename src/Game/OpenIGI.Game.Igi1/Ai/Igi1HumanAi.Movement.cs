@@ -234,6 +234,9 @@ public sealed partial class Igi1HumanAi
     /// 1.16), and above which an original stride counts as a run.</summary>
     public const double ModernRunMetresPerSecond = 3.2, ModernWalkMetresPerSecond = 1.2, ModernRunAbove = 2.4;
 
+    /// <summary>The most a guard limping on a wounded leg walks and hurries, in metres a second, and the pace above which he is hurrying.</summary>
+    public const double LimpWalkMetresPerSecond = 0.9, LimpRunMetresPerSecond = 2.0, LimpHurriesAbove = 1.5;
+
     /// <summary>How fast the modern AI gathers pace and brakes, in metres a second each second, and the least pace he arrives
     /// at, in metres a second: a run is reached in about two thirds of a second and braked from over the last metre.</summary>
     public const double ModernGatherPerSecond = 5.0, ModernBrakePerSecond = 6.0, ModernArriveMetresPerSecond = 0.6;
@@ -314,6 +317,11 @@ public sealed partial class Igi1HumanAi
         {
             double original = step / GraphNode.MetreInUnits * AiCombatParameters.TicksPerSecond;
             double wanted = style?.MetresPerSecond ?? (original > ModernRunAbove ? ModernRunMetresPerSecond : OwnWalkPace);
+
+            if (LimpLeg != 0)
+            {
+                wanted = Math.Min(wanted, wanted > LimpHurriesAbove ? LimpRunMetresPerSecond : LimpWalkMetresPerSecond);
+            }
 
             // Up to speed and down from it as a man gets there, not in a tick: he gathers pace from a standstill, and brakes
             // so as to come to rest on the end of his walk, not at it full tilt.

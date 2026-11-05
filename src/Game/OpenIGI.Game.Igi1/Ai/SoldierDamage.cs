@@ -174,6 +174,14 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
         view.KillShot = (
             (forward.X * travel.X) + (forward.Y * travel.Y) > 0.0,
             hit.Zone is SoldierDeath.HeadZone or SoldierDeath.NeckZone);
+        double along = (forward.X * travel.X) + (forward.Y * travel.Y), across = (forward.Y * travel.X) - (forward.X * travel.Y);
+        double metres = OpenIGI.Formats.Ai.GraphNode.MetreInUnits;
+        (double fromX, double fromY) = ((hit.Position.X - view.Position.X) / metres, (hit.Position.Y - view.Position.Y) / metres);
+        view.KillOffCentre = HumanDamage.OffCentre(fromX, fromY, forward.X, forward.Y);
+        view.KillAngle = (
+            HumanDamage.LegOf(hit.Zone),
+            Math.Abs(across) <= Math.Abs(along) ? 0 : across > 0.0 ? -1 : 1, // a round going to his right came from his left
+            HumanDamage.SideOfBody(fromX, fromY, forward.X, forward.Y, view.Soldier.Id));
         view.Kill(animation);
 
         if (brain is not null)
@@ -522,6 +530,7 @@ internal sealed class SoldierDamage(SoldierContext context, SoldierFootsteps foo
             soldier.NoteHit(source, zone);
         }
 
+        brain?.WoundLeg(zone);
         if (!_recoil.TryGetValue(soldier, out HumanRecoil? recoil))
         {
             float? configured = _context.Combat.TryGetValue(soldier, out AiCombatParameters? row) ? row.RecoilThreshold : null;

@@ -421,6 +421,13 @@ public sealed class SoldierView
     /// the modern bodies, to fall the way the shot pushed.</summary>
     public (bool FromBehind, bool Headshot) KillShot { get; set; }
 
+    /// <summary>Gets or sets where else the killing round says how he falls: the leg it struck, the side its shooter was on and the
+    /// side of his body it landed on, each -1 for his left, 1 for his right and 0 for neither. <b>Not retail</b>: read only by the modern bodies.</summary>
+    public (int Leg, int Side, int Landed) KillAngle { get; set; }
+
+    /// <summary>Gets or sets how far the killing round landed from his centre, as a share of the way to his shoulder. <b>Not retail</b>: read only by the modern bodies.</summary>
+    public float KillOffCentre { get; set; }
+
     /// <summary>Gets the last round that struck without killing: which way its shooter was, ahead and to the right in the body's
     /// own frame (unit length along the ground), its zone, and how many have struck. <b>Not retail</b>: read only by the modern
     /// bodies, to flinch the way the round pushed.</summary>

@@ -199,7 +199,7 @@ public sealed partial class SoldierRenderer
         }
 
         body.Tick(moved, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, raise, aiming || ready, member.Agent.ShotSequence, kneeling, keepsDown, turning,
-            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false);
+            crouched: fighter?.CrouchMoving ?? false, heading, travel: step, look: look, searching: ready, scanning: fighter?.KneelScanning ?? false, limp: fighter?.LimpLeg ?? 0);
         if (GameplayCVars.BodyLog.Value >= 0 && GameplayCVars.BodyLog.Value == view.Soldier.Id && fighter is not null)
         {
             _logger.Information(LogCategory + ".Body", FormattableString.Invariant(
@@ -334,6 +334,16 @@ public sealed partial class SoldierRenderer
             body.Gesture(forced == "body_check" ? asset.BodyCheck : asset.HandSignal);
         }
 
+        // limp_walk_left and the rest: limping on the spot at the clip's own pace.
+        if (forced.StartsWith("limp_", StringComparison.Ordinal))
+        {
+            int leg = forced.EndsWith("left", StringComparison.Ordinal) ? 0 : 1;
+            ModernClip limp = (forced.Contains("run", StringComparison.Ordinal) ? asset.LimpRun : asset.LimpWalk)[leg];
+            float pace = limp.MetresPerSecond * tick;
+            body.Tick(pace, GameplayCVars.ModernBodyYaw.Value * MathF.PI / 180f, 0f, aiming: true, travel: new Vector2(pace, 0f), limp: leg == 0 ? -1 : 1);
+            return;
+        }
+
         if (forced == "search_walk")
         {
             float step = asset.SearchWalk.MetresPerSecond * tick;
@@ -391,7 +401,15 @@ public sealed partial class SoldierRenderer
 
         // The height he was drawn at standing, from the tick before: this tick's may already be his death clip's.
         _modernFallHeights[member] = _modernStandingHeights.GetValueOrDefault(member, member.TickWhere.Z);
-        body.Fall(fall, brief: ReferenceEquals(fall, asset.ShortDeaths[view.KillShot.FromBehind ? 1 : 0, view.KillShot.Headshot ? 1 : 0]));
+        bool brief = ReferenceEquals(fall, asset.ShortDeath(view.KillShot.FromBehind, view.KillShot.Headshot, view.KillAngle));
+        body.Fall(fall, brief);
+
+        // A round from the front into his body lands on one side of him, and that side takes it; a little even from near his centre.
+        if (brief && !view.KillShot.FromBehind && !view.KillShot.Headshot && view.KillAngle is { Leg: 0, Side: 0 })
+        {
+            body.Impact(view.KillAngle.Landed, 0.6f + (0.4f * view.KillOffCentre));
+        }
+
         return true;
     }
 
@@ -399,9 +417,8 @@ public sealed partial class SoldierRenderer
     // falls are their own; not for a man running, who carries on into the fall from the run; not for a blast, which throws him at once.
     private static ModernClip? ModernFallFor(SoldierMember member, ModernBodyAsset asset, SoldierView view, ModernBody body)
     {
-        int side = view.KillShot.FromBehind ? 1 : 0, head = view.KillShot.Headshot ? 1 : 0;
         bool standing = !body.Kneeling && !IsBlast(member) && CarriedMetresPerSecond(member) <= RagdollRunningMetresPerSecond;
-        return GameplayCVars.ModernRagdoll.Value && standing && asset.ShortDeaths[side, head] is { } brief
+        return GameplayCVars.ModernRagdoll.Value && standing && asset.ShortDeath(view.KillShot.FromBehind, view.KillShot.Headshot, view.KillAngle) is { } brief
             ? brief
             : asset.Death(view.KillShot.FromBehind, view.KillShot.Headshot, body.Kneeling);
     }
@@ -463,7 +480,7 @@ public sealed partial class SoldierRenderer
     }
 
     /// <summary>How long a fall plays before the ragdoll takes it over, in seconds: a moment, or less for a man at a run, who would stop dead.</summary>
-    public const float RagdollAfterSeconds = 0.25f, RagdollAfterRunningSeconds = 0.1f;
+    public const float RagdollAfterShotgunSeconds = 0.1f, RagdollAfterSeconds = 0.25f, RagdollAfterRunningSeconds = 0.1f;
 
     /// <summary>Above this speed, in metres a second, a man shot dead counts as running.</summary>
     public const double RagdollRunningMetresPerSecond = 2.0;
@@ -485,7 +502,10 @@ public sealed partial class SoldierRenderer
 
             // A short fall runs to its end, where it is going at the speed physics carries on from; and its own motion is the round's.
             bool brief = body.FallIsBrief;
-            float after = blast ? 0f : speed > RagdollRunningMetresPerSecond ? RagdollAfterRunningSeconds : brief ? body.FallDuration : RagdollAfterSeconds;
+
+            // A shotgun's charge is more than any clip plays: it cuts the fall short and throws him itself.
+            bool thrown = brief && member.ModernFall?.Fall.Category == WeaponCategory.Shotgun;
+            float after = blast ? 0f : speed > RagdollRunningMetresPerSecond ? RagdollAfterRunningSeconds : thrown ? RagdollAfterShotgunSeconds : brief ? body.FallDuration : RagdollAfterSeconds;
             if (!body.Fallen || body.FallTime < after || body.Kept.Now.Length == 0)
             {
                 return false;
@@ -507,14 +527,15 @@ public sealed partial class SoldierRenderer
             {
                 // The way he was going, and the round that killed him.
                 seeded.AddVelocity(going);
-                if (!brief)
-                {
-                    RagdollImpulse.Apply(seeded, -1, fall.Travel, RagdollImpulse.MomentumOf(_modernRagdoll.Rig, fall.Category, GameplayCVars.RagdollForce.Value), blast, blast ? null : fall.Struck);
-                }
+                double force = GameplayCVars.RagdollForce.Value;
+                double momentum = brief && !thrown
+                    ? RagdollImpulse.MomentumAfterClip(_modernRagdoll.Rig, fall.Category, force)
+                    : RagdollImpulse.MomentumOf(_modernRagdoll.Rig, fall.Category, force);
+                RagdollImpulse.Apply(seeded, -1, fall.Travel, momentum, blast, blast ? null : fall.Struck);
             }
 
             member.ModernCorpse = seeded;
-            _logger.Information(LogCategory + ".Corpse", FormattableString.Invariant($"soldier {view.Soldier.Id}: the ragdoll takes over at {body.FallTime:0.00} s, going {speed:0.0} m/s, {member.ModernFall?.Fall.Category}."));
+            _logger.Information(LogCategory + ".Corpse", FormattableString.Invariant($"soldier {view.Soldier.Id}: the ragdoll takes over at {body.FallTime:0.00} s, going {speed:0.0} m/s, leg {view.KillAngle.Leg} side {view.KillAngle.Side} landed {view.KillAngle.Landed}, {member.ModernFall?.Fall.Category}."));
         }
 
         if (member.ModernCorpse is not { } corpse || _modernRagdoll is not { } ragdoll)
@@ -523,7 +544,15 @@ public sealed partial class SoldierRenderer
         }
 
         bool wasResting = corpse.IsAtRest;
-        corpse.Step(_sim.RagdollWorldForCorpses(), GameplayCVars.RagdollSubsteps.Value, GameplayCVars.RagdollGravity.Value, null, SoldierFrameInterpolator.MuscleTicks());
+
+        // Thrown by a shotgun, he has no muscle left to stand against it: held up as long as the rest, the blast seems to land late.
+        var muscle = SoldierFrameInterpolator.MuscleTicks();
+        if (body.FallIsBrief && member.ModernFall?.Fall.Category == WeaponCategory.Shotgun)
+        {
+            muscle = Math.Min(muscle, 3);
+        }
+
+        corpse.Step(_sim.RagdollWorldForCorpses(), GameplayCVars.RagdollSubsteps.Value, GameplayCVars.RagdollGravity.Value, null, muscle);
         if (!corpse.IsValid)
         {
             member.ModernCorpse = null;

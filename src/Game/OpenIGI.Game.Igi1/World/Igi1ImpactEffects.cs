@@ -391,7 +391,12 @@ public sealed class Igi1ImpactEffects(MissionWorld mission, IImpactEffectsHost h
             && int.TryParse(context[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int id)
             && soldiers.SoldierViews.FirstOrDefault(view => view.Soldier.Id == id) is { } target)
         {
-            Vector3d chest = target.Position + new Vector3d(0.0, 0.0, 1.3 * WorldScene.UnitsPerMetre);
+            // Or at the height above his feet, and metres to the shooter's right, given after his id.
+            double At(int index, double otherwise) => context.Count > index
+                && double.TryParse(context[index], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value) ? value : otherwise;
+            Vector3d chest = target.Position + new Vector3d(0.0, 0.0, At(2, 1.3) * WorldScene.UnitsPerMetre);
+            Vector3d flat = new(chest.X - origin.X, chest.Y - origin.Y, 0.0);
+            chest += new Vector3d(flat.Y, -flat.X, 0.0) * (At(3, 0.0) * WorldScene.UnitsPerMetre / Math.Max(flat.Length, 1.0));
             Vector3d line = chest - origin;
             end = origin + (line * (Reach / Math.Max(line.Length, 1.0)));
         }
@@ -425,7 +430,7 @@ public sealed class Igi1ImpactEffects(MissionWorld mission, IImpactEffectsHost h
         _eye = eye;
         console.Commands.Add(
             "ragdoll_test",
-            "Kills a soldier with a round: ragdoll_test [gun|pistol|shotgun|grenade|list] [soldier id]; ragdoll_test bleed [id] fires a harmless round along the view, or at where that soldier lies.",
+            "Kills a soldier with a round: ragdoll_test [gun|pistol|shotgun|grenade|list] [soldier id] [metres above his feet] [metres to the shooter's right]; ragdoll_test bleed [id] fires a harmless round along the view, or at where that soldier lies.",
             context => KillForRagdollTest(context, logger));
 
         console.Commands.Add(

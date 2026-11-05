@@ -372,6 +372,38 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <remarks>Named <c>death_short_front</c>, <c>death_short_back</c>, <c>death_short_front_head</c> and <c>death_short_back_head</c>.</remarks>
     public ModernClip?[,] ShortDeaths { get; private set; } = new ModernClip?[2, 2];
 
+    /// <summary>Gets the walks on a wounded leg, left then right, each <see cref="ModernClip.None"/> where the file has none.</summary>
+    public ModernClip[] LimpWalk { get; private set; } = [ModernClip.None, ModernClip.None];
+
+    /// <summary>Gets the hurried jogs on a wounded leg, left then right, each <see cref="ModernClip.None"/> where the file has none.</summary>
+    public ModernClip[] LimpRun { get; private set; } = [ModernClip.None, ModernClip.None];
+
+    /// <summary>Gets the short fall from the front for a hit on his right side, <c>death_short_front_right</c>; null where the file has none.</summary>
+    public ModernClip? ChestFrontRight { get; private set; }
+
+    /// <summary>Gets the short falls from a shot leg giving way, left then right, each null where the file has none.</summary>
+    /// <remarks>Named <c>death_short_leg_left</c> and <c>death_short_leg_right</c>.</remarks>
+    public ModernClip?[] LegDeaths { get; private set; } = new ModernClip?[2];
+
+    /// <summary>Gets the short falls from a shot from the side, shooter on his left then right, each null where the file has none.</summary>
+    /// <remarks>Named <c>death_short_side_left</c> and <c>death_short_side_right</c>.</remarks>
+    public ModernClip?[] SideDeaths { get; private set; } = new ModernClip?[2];
+
+    /// <summary>Gets the short fall for a kill: the head first, then a leg, then the side the shot came from, else the chest's.</summary>
+    /// <param name="fromBehind">Whether the round came from behind.</param>
+    /// <param name="headshot">Whether it struck the head or neck.</param>
+    /// <param name="angle">The leg it struck, the side its shooter was on and the side of him it landed on (<c>SoldierView.KillAngle</c>).</param>
+    /// <returns>The fall, or null where the character has none.</returns>
+    public ModernClip? ShortDeath(bool fromBehind, bool headshot, (int Leg, int Side, int Landed) angle)
+    {
+        ModernClip? chosen = headshot ? null
+            : angle.Leg != 0 ? LegDeaths[angle.Leg > 0 ? 1 : 0]
+            : angle.Side != 0 ? SideDeaths[angle.Side > 0 ? 1 : 0]
+            : !fromBehind && angle.Landed > 0 ? ChestFrontRight
+            : null;
+        return chosen ?? ShortDeaths[fromBehind ? 1 : 0, headshot ? 1 : 0];
+    }
+
     /// <summary>Gets the falls from a kneel, shot from the front and from behind; each null where the character has none.</summary>
     public ModernClip?[] KneelDeaths { get; private set; } = new ModernClip?[2];
 
@@ -535,7 +567,10 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.KneelScan = Optional("kneel_scan", travelling: false, asset.KneelAim);
         asset.BodyCheck = Optional("body_check", travelling: false, ModernClip.None);
         asset.HandSignal = Optional("hand_signal", travelling: false, ModernClip.None);
-        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run, asset.CrouchWalk, asset.StrafeLeft, asset.StrafeRight, asset.WalkBack, asset.SearchWalk }.Distinct())
+        asset.LimpWalk = [Optional("limp_walk_left", travelling: true, ModernClip.None), Optional("limp_walk_right", travelling: true, ModernClip.None)];
+        asset.LimpRun = [Optional("limp_run_left", travelling: true, ModernClip.None), Optional("limp_run_right", travelling: true, ModernClip.None)];
+        foreach (ModernClip moving in new[] { asset.Walk, asset.AimWalk, asset.Run, asset.CrouchWalk, asset.StrafeLeft, asset.StrafeRight, asset.WalkBack, asset.SearchWalk }
+            .Concat(asset.LimpWalk).Concat(asset.LimpRun).Where(clip => !ReferenceEquals(clip, ModernClip.None)).Distinct())
         {
             moving.MetresPerSecond = ModernBody.WalkSpeed(asset, moving);
         }
@@ -560,6 +595,10 @@ internal sealed class ModernBodyAsset : IDisposable
         {
             asset.ShortDeaths[side, head] = Fall(name);
         }
+
+        asset.ChestFrontRight = Fall("death_short_front_right");
+        asset.LegDeaths = [Fall("death_short_leg_left"), Fall("death_short_leg_right")];
+        asset.SideDeaths = [Fall("death_short_side_left"), Fall("death_short_side_right")];
 
         asset.KneelDeaths = [Fall("death_kneel_front"), Fall("death_kneel_back")];
         asset.KneelHeadDeath = Fall("death_kneel_head");
@@ -645,10 +684,11 @@ internal sealed class ModernBodyAsset : IDisposable
     /// <param name="world">Each node's world matrix, written.</param>
     /// <param name="skin">Each joint's skinning matrix, written.</param>
     /// <param name="inertia">The blend into the fall from what he was doing (<see cref="ModernInertia"/>), or null.</param>
-    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin, ModernInertia? inertia = null)
+    /// <param name="kicks">Each node's kick (<see cref="ModernBody.Kick"/>), or null.</param>
+    public void PoseFall(ModernClip fall, float time, Matrix4x4[] world, Matrix4x4[] skin, ModernInertia? inertia = null, Vector3[]? kicks = null)
     {
         ModernMix mix = new(fall, time, fall, time, 0f);
-        Blend(mix, mix, 1f, world, skin, inertia: inertia);
+        Blend(mix, mix, 1f, world, skin, kicks: kicks, inertia: inertia);
     }
 
     private void Blend(

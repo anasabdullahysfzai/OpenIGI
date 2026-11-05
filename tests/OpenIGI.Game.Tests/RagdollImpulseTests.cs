@@ -12,6 +12,28 @@ namespace OpenIGI.Game.Tests;
 /// </summary>
 public sealed class RagdollImpulseTests
 {
+    /// <summary>A round landing to one side of a man facing +Y counts as that side; near his centre the soldier's own number decides.</summary>
+    [Theory]
+    [InlineData(0.2, 0.0, 0, 1)]
+    [InlineData(-0.2, 0.0, 0, -1)]
+    [InlineData(0.01, 0.0, 0, -1)]
+    [InlineData(-0.01, 0.0, 1, 1)]
+    public void ARoundCountsAsTheSideOfHimItLandedOn(double x, double y, int tieBreak, int side) =>
+        Assert.Equal(side, OpenIGI.Game.Player.HumanDamage.SideOfBody(x, y, 0.0, 1.0, tieBreak));
+
+    /// <summary>A short clip acts out a pistol's worth of any round, so a harder one has only the rest left to give.</summary>
+    [Fact]
+    public void AfterAClipOnlyWhatARoundCarriesBeyondAPistolsIsLeft()
+    {
+        RagdollSkeleton rig = RagdollRig.Rig();
+        double Left(WeaponCategory category) => RagdollImpulse.MomentumAfterClip(rig, category, 1.0);
+
+        Assert.Equal(0.0, Left(WeaponCategory.Knife));
+        Assert.Equal(0.0, Left(WeaponCategory.Pistol));
+        Assert.True(Left(WeaponCategory.Gun) > 0.0);
+        Assert.True(Left(WeaponCategory.Shotgun) > 2.0 * Left(WeaponCategory.Gun));
+    }
+
     /// <summary>The body is thrown the way the round was travelling, not the way it was facing.</summary>
     [Theory]
     [InlineData(1.0, 0.0, 0.0)]

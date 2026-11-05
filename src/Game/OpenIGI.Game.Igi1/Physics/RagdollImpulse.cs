@@ -124,6 +124,15 @@ public static class RagdollImpulse
         return metresPerSecond * UnitsPerMetre / TicksPerSecond * rig.TotalMass;
     }
 
+    /// <summary>What is left of a shot for the ragdoll after a short death clip has acted it out.</summary>
+    /// <param name="rig">The rig being hit.</param>
+    /// <param name="category">The weapon that fired.</param>
+    /// <param name="scale">The player's own multiplier -- <c>g_ragdoll_force</c>.</param>
+    /// <returns>The momentum, in kilogram engine-units per tick; nothing for a pistol or less.</returns>
+    /// <remarks>The clip plays any round as about a pistol's, so only what a round carries beyond that is still to come. <b>Not retail.</b></remarks>
+    public static double MomentumAfterClip(RagdollSkeleton rig, WeaponCategory category, double scale) =>
+        Math.Max(0.0, MomentumOf(rig, category, scale) - MomentumOf(rig, WeaponCategory.Pistol, scale));
+
     /// <summary>Pushes a body with the round that killed it.</summary>
     /// <param name="body">The body to push.</param>
     /// <param name="bone">The bone the round went through; <c>-1</c> pushes the root instead.</param>

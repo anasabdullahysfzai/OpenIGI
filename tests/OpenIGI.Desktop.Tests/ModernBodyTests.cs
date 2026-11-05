@@ -387,6 +387,61 @@ public sealed class ModernBodyTests(Xunit.Abstractions.ITestOutputHelper output)
     }
 
     [RequiresModernBodyFact]
+    public void ARoundFromTheFrontLandsOnTheSideItStruck()
+    {
+        using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);
+        int Bone(string name) => Array.IndexOf(asset.Names, "mixamorig:" + name);
+        (int left, int right, int head) = (Bone("LeftArm"), Bone("RightArm"), Bone("Head"));
+
+        // In glTF's world: z is ahead, x his left. By the tick: how far his shoulders have turned to his left (his left one going back), in degrees, and his head to his left.
+        List<(float Behind, float Aside)> Fall(int side, bool impact)
+        {
+            using ModernBody body = new(asset, new RecordingGraphicsDevice());
+            for (int tick = 0; tick < 30; tick++)
+            {
+                body.Tick(0f, 0f, aiming: true);
+            }
+
+            body.Fall(asset.ShortDeath(false, false, (0, 0, side))!, brief: true);
+            if (impact)
+            {
+                body.Impact(side, 1f);
+            }
+
+            List<(float Behind, float Aside)> ticks = [];
+            for (int tick = 0; tick < 12; tick++)
+            {
+                body.Tick(0f, 0f);
+                Vector3 across = body.BoneForTesting(left) - body.BoneForTesting(right);
+                ticks.Add((MathF.Atan2(-across.Z, across.X) * 180f / MathF.PI, body.BoneForTesting(head).X));
+            }
+
+            return ticks;
+        }
+
+        // What the impact adds to the fall by itself, at its most over the first third of a second.
+        (float Behind, float Aside) Added(int side)
+        {
+            List<(float Behind, float Aside)> with = Fall(side, true), without = Fall(side, false);
+            (float behind, float aside) = (0f, 0f);
+            for (int tick = 0; tick < with.Count; tick++)
+            {
+                (float b, float a) = (with[tick].Behind - without[tick].Behind, with[tick].Aside - without[tick].Aside);
+                output.WriteLine($"side {side} tick {tick}: shoulders turned left {with[tick].Behind:+0;-0} degrees ({b:+0;-0} added), head left {with[tick].Aside:+0.00;-0.00} m ({a:+0.00;-0.00} added)");
+                (behind, aside) = (Math.Abs(b) > Math.Abs(behind) ? b : behind, Math.Abs(a) > Math.Abs(aside) ? a : aside);
+            }
+
+            return (behind, aside);
+        }
+
+        (float Behind, float Aside) hitLeft = Added(-1), hitRight = Added(1);
+        Assert.True(hitLeft.Behind > 15f, $"a hit on his left turned his shoulders {hitLeft.Behind} degrees to his left");
+        Assert.True(hitRight.Behind < -15f, $"a hit on his right turned his shoulders {hitRight.Behind} degrees to his left");
+        Assert.True(hitLeft.Aside > 0.05f, $"a hit on his left took his head {hitLeft.Aside} m to his left");
+        Assert.True(hitRight.Aside < -0.05f, $"a hit on his right took his head {hitRight.Aside} m to his left");
+    }
+
+    [RequiresModernBodyFact]
     public void ARoundKicksTheBoneItStruck()
     {
         using ModernBodyAsset asset = ModernBodyAsset.Load(new RecordingGraphicsDevice(), File);

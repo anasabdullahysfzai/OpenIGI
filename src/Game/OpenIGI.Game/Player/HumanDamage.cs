@@ -227,6 +227,36 @@ public static class HumanDamage
         _ => $"zone {zone}",
     };
 
+    /// <summary>Which leg a zone is on: -1 the left, 1 the right, 0 neither.</summary>
+    /// <param name="zone">The zone.</param>
+    /// <returns>The leg.</returns>
+    public static int LegOf(int zone) => zone is >= 0 and <= 2 ? 1 : zone is >= 6 and <= 8 ? -1 : 0;
+
+    /// <summary>How far off his centre a round has to land to count as on one side of him, in metres.</summary>
+    public const double OffCentreMetres = 0.08;
+
+    /// <summary>Which side of a body a round landed on: -1 his left, 1 his right; near his centre, whichever <paramref name="tieBreak"/> falls to.</summary>
+    /// <param name="fromCentreX">From his centre to where it landed, in metres.</param>
+    /// <param name="fromCentreY">The same, the other way along the ground.</param>
+    /// <param name="forwardX">Which way he faces, unit length along the ground.</param>
+    /// <param name="forwardY">The same, the other way.</param>
+    /// <param name="tieBreak">Any number that differs between soldiers, so that all do not fall the same way.</param>
+    /// <returns>The side.</returns>
+    public static int SideOfBody(double fromCentreX, double fromCentreY, double forwardX, double forwardY, int tieBreak)
+    {
+        double right = (fromCentreX * forwardY) - (fromCentreY * forwardX);
+        return Math.Abs(right) < OffCentreMetres ? ((tieBreak & 1) == 0 ? -1 : 1) : Math.Sign(right);
+    }
+
+    /// <summary>How far a round landed from his centre as a share of the way to his shoulder, nought to one.</summary>
+    /// <param name="fromCentreX">From his centre to where it landed, in metres.</param>
+    /// <param name="fromCentreY">The same, the other way along the ground.</param>
+    /// <param name="forwardX">Which way he faces, unit length along the ground.</param>
+    /// <param name="forwardY">The same, the other way.</param>
+    /// <returns>The share.</returns>
+    public static float OffCentre(double fromCentreX, double fromCentreY, double forwardX, double forwardY) =>
+        (float)Math.Min(1.0, Math.Abs((fromCentreX * forwardY) - (fromCentreY * forwardX)) / 0.2);
+
     /// <summary>The damage one hit does.</summary>
     /// <param name="zoneMultiplier">The struck zone's multiplier, from the human's own table.</param>
     /// <param name="damageFactor">The weapon's <c>Damage Factor</c>, carried by the round.</param>

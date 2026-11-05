@@ -24,6 +24,9 @@ internal sealed class ModernBody : IDisposable
     /// <summary>Above this ground speed, in metres a second, he runs; below the second, a runner walks again.</summary>
     public const float RunAbove = 2.2f, RunBelow = 1.8f;
 
+    /// <summary>Above how many metres a second a limping body shows his hurried limp: between his walk (0.9) and jog (2.0).</summary>
+    public const float LimpRunAbove = 1.5f;
+
     /// <summary>How long a shot keeps the firing clip playing, in seconds.</summary>
     public const float FireSeconds = 0.6f;
 
@@ -225,6 +228,39 @@ internal sealed class ModernBody : IDisposable
     /// <returns>The angle.</returns>
     internal float KickAngleForTesting(int node) => node < _kick.Length ? _kick[node].Length() : 0f;
 
+    /// <summary>How far the impact of a killing round turns his upper body at most, in radians: towards the side it landed on, in all, and leaning.</summary>
+    public const float ImpactTwist = 1.3f, ImpactLean = 0.75f;
+
+    /// <summary>
+    /// The impact of a round from the front on the side of him it landed on: that shoulder goes back and his upper body bends that way,
+    /// then springs back over the fall. Each spine bone takes its share, as a kick (<see cref="Kick"/>).
+    /// </summary>
+    /// <param name="side">The side it landed on: -1 his left, 1 his right.</param>
+    /// <param name="strength">How much of the full impact, one being all of it.</param>
+    public void Impact(int side, float strength)
+    {
+        if (_kick.Length == 0)
+        {
+            (_kick, _kickSpeed) = (new Vector3[_world.Length], new Vector3[_world.Length]);
+        }
+
+        // In glTF's world, about the up axis: going left brings his left shoulder back. About the axis ahead: going right tips him to his right.
+        Vector3 turn = new(0f, -side * ImpactTwist, side * ImpactLean);
+        const float stepped = 1.35f;
+        float root = MathF.Sqrt(1f - (KickDamping * KickDamping));
+        float swing = MathF.Exp(-KickDamping / root * MathF.Atan(root / KickDamping));
+        (int spine, int spine1, int spine2, _, _) = _asset.Torso;
+        foreach ((int node, float share) in new[] { (spine, 0.25f), (spine1, 0.3f), (spine2, 0.45f) })
+        {
+            if (node >= 0)
+            {
+                _kickSpeed[node] += turn * (share * strength * KickSpring / swing * stepped);
+            }
+        }
+    }
+
+    internal Vector3 BoneForTesting(int node) => _world[node].Translation;
+
     // One tick of every kicked bone's spring.
     private void SpringKicks()
     {
@@ -312,6 +348,7 @@ internal sealed class ModernBody : IDisposable
     /// <param name="shots">How many shots he has fired, which a firing clip follows.</param>
     /// <param name="searching">Whether he walks hunting for someone: the cautious walk.</param>
     /// <param name="scanning">Whether, kneeling, he looks about him, rifle up.</param>
+    /// <param name="limp">The leg he limps on: -1 his left, 1 his right, 0 neither.</param>
     /// <param name="kneeling">Whether he kneels: down out of sight, or with his rifle up when he is also aiming.</param>
     /// <param name="keepsDown">Whether he kneels to hide, his rifle lowered whatever the fight.</param>
     /// <param name="turning">How fast he turns about up, in radians a second, left positive.</param>
@@ -321,7 +358,7 @@ internal sealed class ModernBody : IDisposable
     /// <param name="look">Where he looks, in the soldier's frame (x right, y ahead, z up), from his eyes; zero for nowhere in
     /// particular. Aiming, his upper body bends to it; always, his head turns to it.</param>
     public void Tick(float moved, float yaw, float raise = 0f, bool aiming = false, int shots = 0, bool kneeling = false, bool keepsDown = false, float turning = 0f,
-        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default, bool searching = false, bool scanning = false)
+        bool crouched = false, Vector2 heading = default, Vector2 travel = default, Vector3 look = default, bool searching = false, bool scanning = false, int limp = 0)
     {
         if (_fall is { } fall)
         {
@@ -335,7 +372,8 @@ internal sealed class ModernBody : IDisposable
             _fallTime += TickSeconds;
             _fallRaise = raise;
             _inertia.Step(TickSeconds);
-            _asset.PoseFall(fall, _fallTime, _world, _skin, _inertia);
+            SpringKicks();
+            _asset.PoseFall(fall, _fallTime, _world, _skin, _inertia, _kick.Length > 0 ? _kick : null);
             _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
 
             // Nothing of him below the floor his feet stood on: a fall swings a hand or a knee lower than the feet were.
@@ -366,7 +404,7 @@ internal sealed class ModernBody : IDisposable
         }
 
         _firingFor = Math.Max(0f, _firingFor - TickSeconds);
-        _running = moving && (_running ? Speed > RunBelow : Speed > RunAbove);
+        _running = moving && (limp != 0 ? Speed > LimpRunAbove : _running ? Speed > RunBelow : Speed > RunAbove);
         ModernClip stand = kneeling && scanning && _firingFor <= 0f ? _asset.KneelScan
             : kneeling ? (!keepsDown && (aiming || _firingFor > 0f) ? _asset.KneelAim : _asset.KneelIdle)
             : _firingFor > 0f ? _asset.Fire : aiming ? _asset.AimIdle : _asset.Idle;
@@ -420,7 +458,10 @@ internal sealed class ModernBody : IDisposable
         _turnWeight = Math.Clamp(_turnWeight + ((_turnFor > 0f ? 1f : -1f) * TickSeconds / TurnBlendSeconds), 0f, 1f);
 
         // Crouched, his crouched walk; facing elsewhere than he goes, the clip for the way he goes against his facing.
-        ModernClip move = searching ? _asset.SearchWalk
+        ModernClip limping = limp == 0 || crouched || heading != Vector2.Zero ? ModernClip.None
+            : (_running ? _asset.LimpRun : _asset.LimpWalk)[limp > 0 ? 1 : 0];
+        ModernClip move = !ReferenceEquals(limping, ModernClip.None) ? limping
+            : searching ? _asset.SearchWalk
             : crouched ? _asset.CrouchWalk
             : heading != Vector2.Zero ? (Math.Abs(heading.X) >= Math.Abs(heading.Y)
                 ? (heading.X >= 0f ? _asset.AimWalk : _asset.WalkBack)
