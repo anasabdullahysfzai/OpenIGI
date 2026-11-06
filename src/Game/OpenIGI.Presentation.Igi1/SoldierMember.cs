@@ -101,6 +101,12 @@ internal sealed class SoldierMember(SoldierAgent agent, MeshHandle mesh)
     /// </remarks>
     public RagdollBody? Ragdoll { get; set; }
 
+    /// <summary>Gets or sets the attacker's body while this soldier is taken down, drawn from his origin; null otherwise.</summary>
+    public ModernBody? TakedownPartner { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether a takedown has laid him where he lies: no ragdoll takes that over.</summary>
+    public bool TakenDown { get; set; }
+
     /// <summary>Whether the animated mesh took a new pose since the last frame's bookkeeping.</summary>
     /// <remarks>
     /// When it did, the previous-pose stream now holds what was on screen last frame, and the

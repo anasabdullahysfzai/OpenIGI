@@ -434,6 +434,23 @@ public sealed class Igi1ImpactEffects(MissionWorld mission, IImpactEffectsHost h
             context => KillForRagdollTest(context, logger));
 
         console.Commands.Add(
+            "takedown_test",
+            "Stands the player behind a soldier, where a takedown can start: takedown_test [soldier id].",
+            context =>
+            {
+                if (mission.SoldierPresenter?.Simulation is not { } soldiers || mission.Player is not { } player || context.Count < 1
+                    || !int.TryParse(context[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int id)
+                    || soldiers.SoldierViews.FirstOrDefault(soldier => soldier.Soldier.Id == id) is not { } view || soldiers.Takedown is not null)
+                {
+                    context.Warn("takedown_test [soldier id]: no such soldier here, or one is under way.");
+                    return;
+                }
+
+                soldiers.TakedownTestPlace = view;
+                logger.Warning("Impact", $"takedown_test: soldier {id}.");
+            });
+
+        console.Commands.Add(
             "grenade_test",
             "Tells soldiers of a grenade in front of one, for what they do about it: grenade_test [thrown|land|flash] [soldier id] [metres ahead of him].",
             context =>

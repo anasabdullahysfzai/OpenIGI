@@ -94,6 +94,10 @@ internal sealed class SoldierFrameInterpolator(List<SoldierGroup> groups, Soldie
                         if (WantedThisFrame(member, seen++))
                         {
                             _modern.Add(body);
+                            if (member.TakedownPartner is { } partner)
+                            {
+                                _modern.Add(partner);
+                            }
                         }
                         else
                         {

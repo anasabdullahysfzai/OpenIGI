@@ -249,7 +249,7 @@ public sealed partial class SoldierSimulation : IHumanEvents
         // by count, than the port's had.
         brain.HumanDead = _context.HealthOf(view).IsDead;
         // dev_ai_freeze: he thinks nothing until he is dead, which he still handles.
-        if (!GameplayCVars.FreezeAi.Value || brain.HumanDead)
+        if ((!GameplayCVars.FreezeAi.Value || brain.HumanDead) && !ReferenceEquals(Takedown?.Victim, view))
         {
             brain.TickAmong(
                 TickCount - 1,
@@ -726,6 +726,11 @@ public sealed partial class SoldierSimulation : IHumanEvents
     {
         // Authored animation triggers: event 1052 plays "gunpunch_01" (animation 70 swing),
         // event 1040 plays "bodyfall_9", etc.
+        if (SilentDeaths.Contains(view))
+        {
+            return;
+        }
+
         if (AnimationTriggers is not null)
         {
             foreach (AnimTriggerDefinition trigger in AnimationTriggers.Definitions.Values)

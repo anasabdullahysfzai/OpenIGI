@@ -212,6 +212,25 @@ internal sealed class SoldierWeaponDrawer(
 
                         _device.DrawMesh(modern.Mesh, offset, count, modelView, diffuse, TextureHandle.None, BlendMode.Opaque);
                     }
+
+                    // The attacker, drawn from the man he takes down: their clips share his origin. His rifle is slung, and the knife is out.
+                    if (member.TakedownPartner is { Mesh.IsValid: true } partner)
+                    {
+                        partner.SkinIfStale();
+                        foreach ((int offset, int count, TextureHandle diffuse, bool gun) in partner.Subsets)
+                        {
+                            if (!gun)
+                            {
+                                _device.DrawMesh(partner.Mesh, offset, count, modelView, diffuse, TextureHandle.None, BlendMode.Opaque);
+                            }
+                        }
+
+                        (int knifeAt, int knifeCount, TextureHandle knife) = partner.KnifeSubset;
+                        if (knifeCount > 0)
+                        {
+                            _device.DrawMesh(partner.Mesh, knifeAt, knifeCount, modelView, knife, TextureHandle.None, BlendMode.Opaque);
+                        }
+                    }
                 }
                 else if (level > 0 && level == member.Level && member.LevelMesh.IsValid)
                 {

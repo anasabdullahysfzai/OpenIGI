@@ -145,6 +145,18 @@ public sealed partial class SoldierSimulation
     /// <inheritdoc cref="SoldierGunShotRounds.FileTracer"/>
     public void FileTracer(GunShotTracer tracer) => _rounds.FileTracer(tracer);
 
+    /// <summary>Gets or sets the knife takedown under way, whose victim stops thinking; null for none.</summary>
+    public TakedownRun? Takedown { get; set; }
+
+    /// <inheritdoc cref="SoldierDamage.SilentDeaths"/>
+    public HashSet<SoldierView> SilentDeaths => _damage.SilentDeaths;
+
+    /// <summary>Gets or sets the soldier the player could take down now, which the prompt names; null for none.</summary>
+    public SoldierView? TakedownOffer { get; set; }
+
+    /// <summary>Gets or sets the soldier a test stands the player behind on the next tick; null for none.</summary>
+    public SoldierView? TakedownTestPlace { get; set; }
+
     /// <inheritdoc cref="SoldierDamage.BloodSpray"/>
     public Action<object, Vector3d, Vector3f>? BloodSpray { get => _damage.BloodSpray; set => _damage.BloodSpray = value; }
 

@@ -282,12 +282,137 @@ internal sealed class ModernBody : IDisposable
     /// <summary>Starts the body's fall, which every tick after plays once and then holds.</summary>
     /// <param name="fall">The fall (<see cref="ModernBodyAsset.Death"/>).</param>
     /// <param name="brief">Whether it is a short fall a ragdoll finishes, rather than one that ends on the ground.</param>
-    public void Fall(ModernClip fall, bool brief = false)
+    /// <param name="blend">Whether it blends in from what he was doing; not for a body made to play it.</param>
+    public void Fall(ModernClip fall, bool brief = false, bool blend = true)
     {
         FallIsBrief = brief;
         _fall = fall;
         _fallTime = 0f;
-        _inertia.Begin = true;
+        _inertia.Begin = blend;
+    }
+
+    /// <summary>Gets or sets a value indicating whether the knife in his hand is drawn.</summary>
+    public bool ShowsKnife { get; set; }
+
+    /// <summary>Gets the knife's run of triangles and its texture.</summary>
+    public (int IndexOffset, int IndexCount, TextureHandle Diffuse) KnifeSubset => _asset.Knife;
+
+    private float[]? _soak;
+
+    /// <summary>Gets or sets how far blood has spread from where <see cref="BeginSoak"/> set it, in metres.</summary>
+    public float SoakMetres { get; set; }
+
+    /// <summary>Starts blood soaking him from a point, by each vertex's distance from it as he stands now, unevenly, as cloth takes it.</summary>
+    /// <param name="point">Where, in the soldier's frame.</param>
+    /// <param name="runsDown">How much nearer a point below counts, within a hand of straight under it: blood runs down.</param>
+    public void BeginSoak(Vector3 point, float runsDown)
+    {
+        _soak = new float[_vertices.Length];
+        for (int v = 0; v < _vertices.Length; v++)
+        {
+            Vector3f p = _vertices[v].Position;
+            Vector3 r = new Vector3(p.X, p.Y, p.Z) - point;
+            float across = MathF.Sqrt((r.X * r.X) + (r.Y * r.Y));
+            float down = across < 0.09f ? Math.Clamp(-r.Z, 0f, 0.3f) * runsDown : 0f;
+            float uneven = (0.012f * MathF.Sin((p.X * 71f) + (p.Z * 43f))) + (0.01f * MathF.Sin((p.Y * 97f) - (p.Z * 61f))) + (0.006f * MathF.Sin((p.X * 190f) + (p.Y * 150f)));
+            _soak[v] = r.Length() - down + uneven;
+        }
+    }
+
+    // Over the albedo the vertex colour multiplies: what blood leaves of the cloth's colour.
+    private static readonly Bgra32 Blood = Bgra32.FromRgba(112, 6, 6, 255);
+
+    private void ApplySoak()
+    {
+        if (_soak is null)
+        {
+            return;
+        }
+
+        for (int v = 0; v < _soak.Length; v++)
+        {
+            if (_soak[v] < SoakMetres)
+            {
+                Vertex3D was = _vertices[v];
+                _vertices[v] = new Vertex3D(was.Position, was.Normal, was.DiffuseU, was.DiffuseV, colour: Blood);
+            }
+        }
+    }
+
+    private int[] _hiddenJoints = [];
+    private int _hiddenAt = -1;
+
+    /// <summary>Takes his head and neck out of the mesh: every point skinned to them collapses at the root of the neck. For the eye inside it.</summary>
+    public void HideHead()
+    {
+        int neck = _asset.Torso.Neck;
+        _hiddenAt = neck;
+        int[] joints = _asset.JointOfNode;
+        _hiddenJoints = [.. _asset.Below(neck).Select(node => joints[node]).Where(joint => joint >= 0)];
+    }
+
+    private void CollapseHidden(Matrix4x4[] world)
+    {
+        if (_hiddenAt >= 0)
+        {
+            Matrix4x4 gone = Matrix4x4.CreateScale(1e-4f) * Matrix4x4.CreateTranslation(world[_hiddenAt].Translation);
+            foreach (int joint in _hiddenJoints)
+            {
+                _skin[joint] = gone;
+            }
+        }
+    }
+
+    /// <summary>How far from the head bone the eye sits, in metres, up and ahead (the pair tool's viewer).</summary>
+    private const float EyeUp = 0.08f, EyeAhead = 0.10f;
+
+    /// <summary>How far below the head bone's axis the eye looks, as a slope: the pair tool's viewer sees about 4.6 degrees lower.</summary>
+    private const float EyeLooksDown = 0.08f;
+
+    /// <summary>Gets the eye in his head between the last two ticks, in the soldier's frame, metres.</summary>
+    /// <param name="alpha">How far the frame is from the tick before the last to the last, nought to one.</param>
+    /// <returns>The eye, and which way it looks, and up.</returns>
+    public (Vector3 Eye, Vector3 Forward, Vector3 Up) HeadViewAt(float alpha)
+    {
+        int head = _asset.Torso.Head;
+        Matrix4x4.Decompose(_worldBefore[head], out _, out Quaternion ra, out Vector3 ta);
+        Matrix4x4.Decompose(_worldNow[head], out _, out Quaternion rb, out Vector3 tb);
+        Quaternion r = Quaternion.Slerp(ra, rb, alpha);
+        Vector3 up = Vector3.Transform(Vector3.UnitY, r), ahead = Vector3.Transform(Vector3.UnitZ, r);
+        Vector3 eye = Vector3.Lerp(ta, tb, alpha) + (up * EyeUp) + (ahead * EyeAhead);
+        Vector3 forward = Vector3.Normalize(ahead - (up * EyeLooksDown)), lookUp = Vector3.Normalize(up + (ahead * EyeLooksDown));
+        float yaw = _keptYawBefore + ((_keptYaw - _keptYawBefore) * alpha), lift = _keptLiftBefore + ((_keptLift - _keptLiftBefore) * alpha);
+        return (ModernBodyAsset.ToBody(eye, yaw) + new Vector3(0f, 0f, lift), ModernBodyAsset.ToBody(forward, yaw), ModernBodyAsset.ToBody(lookUp, yaw));
+    }
+
+    /// <summary>Gets a clip's last pose: where his hips stand and his head looks along the ground, in the soldier's frame.</summary>
+    /// <param name="clip">The clip.</param>
+    /// <param name="yaw">The character's extra turn about up, in radians.</param>
+    /// <returns>The hips, and the head's forward.</returns>
+    public (Vector3 Hips, Vector3 Forward) EndOf(ModernClip clip, float yaw)
+    {
+        Matrix4x4[] world = new Matrix4x4[_world.Length], skin = new Matrix4x4[_skin.Length];
+        _asset.PoseFall(clip, clip.Duration, world, skin);
+        Matrix4x4.Decompose(world[_asset.Torso.Head], out _, out Quaternion r, out _);
+        int hips = Array.IndexOf(_asset.Names, "mixamorig:Hips");
+        return (ModernBodyAsset.ToBody(world[hips].Translation, yaw), ModernBodyAsset.ToBody(Vector3.Transform(Vector3.UnitZ, r), yaw));
+    }
+
+    /// <summary>Gets a point on the neck, as he was last posed, in the soldier's frame: an offset, in glTF's world at the clip's first frame, carried with his neck.</summary>
+    /// <param name="clip">The clip whose first frame the offset was measured on.</param>
+    /// <param name="offset">The offset, metres.</param>
+    /// <param name="yaw">The character's extra turn about up, in radians.</param>
+    /// <returns>The point, and the way out from the neck through it.</returns>
+    public (Vector3 Point, Vector3 Out) OnNeck(ModernClip clip, Vector3 offset, float yaw)
+    {
+        Matrix4x4[] world = new Matrix4x4[_world.Length], skin = new Matrix4x4[_skin.Length];
+        int neck = _asset.Torso.Neck;
+        _asset.PoseFall(clip, 0f, world, skin);
+        Matrix4x4.Decompose(world[neck], out _, out Quaternion first, out _);
+        Vector3 inNeck = Vector3.Transform(offset, Quaternion.Inverse(first));
+        Matrix4x4.Decompose(_worldNow[neck], out _, out Quaternion now, out Vector3 at);
+        Vector3 turned = Vector3.Transform(inNeck, now);
+        return (ModernBodyAsset.ToBody(at + turned, yaw) + new Vector3(0f, 0f, _keptLift), Vector3.Normalize(ModernBodyAsset.ToBody(turned, yaw)));
     }
 
     /// <summary>Gets how long the fall has played, in seconds.</summary>
@@ -377,6 +502,7 @@ internal sealed class ModernBody : IDisposable
             _inertia.Step(TickSeconds);
             SpringKicks();
             _asset.PoseFall(fall, _fallTime, _world, _skin, _inertia, _kick.Length > 0 ? _kick : null);
+            CollapseHidden(_world);
             _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise, _vertices);
 
             // Nothing of him below the floor his feet stood on: a fall swings a hand or a knee lower than the feet were.
@@ -386,6 +512,7 @@ internal sealed class ModernBody : IDisposable
                 _asset.Skin(_skin, yaw, (Lift ?? 0f) + raise + under, _vertices);
             }
 
+            ApplySoak();
             _device.UpdateAnimatedMesh(Mesh, _vertices);
             Keep(yaw, (Lift ?? 0f) + raise + Math.Max(0f, under));
             return;
@@ -793,9 +920,11 @@ internal sealed class ModernBody : IDisposable
             _skin[joint] = inverseBind * _worldDrawn[node];
         }
 
+        CollapseHidden(_worldDrawn);
         float yaw = _keptYawBefore + ((_keptYaw - _keptYawBefore) * alpha);
         float lift = _keptLiftBefore + ((_keptLift - _keptLiftBefore) * alpha);
         _asset.Skin(_skin, yaw, lift, _vertices);
+        ApplySoak();
         return true;
     }
 

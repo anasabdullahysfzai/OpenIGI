@@ -489,6 +489,29 @@ public static class GameplayCVars
         CVarOptions.None,
         "Soldiers stop thinking until they die, so a test can shoot them where they stand (testing).");
 
+    /// <summary>How far to one side a takedown is watched from, in metres, for a test; nought for the attacker's eye. It stays on after he has let go.</summary>
+    public static readonly NumericCVar<float> TakedownWatch = CVar.Float(
+        "dev_takedown_watch",
+        0f,
+        -100f,
+        100f,
+        CVarOptions.None,
+        "Watches a takedown from this many metres to the victim's side instead of the attacker's eye (testing); negative for his left.");
+
+    /// <summary>Whether the use key is held down by the game (testing).</summary>
+    public static readonly BoolCVar BotUse = CVar.Bool(
+        "dev_bot_use",
+        false,
+        CVarOptions.None,
+        "Presses the use key for the player, for a test to take an offered takedown.");
+
+    /// <summary>Whether a player behind an unaware soldier can take him down with the knife, on a pair of modern bodies.</summary>
+    public static readonly BoolCVar Takedowns = CVar.Bool(
+        "g_takedowns",
+        false,
+        CVarOptions.Archive,
+        "From behind an unaware guard, a prompt and a key take him down with the knife, seen in first person (needs g_modern_bodies).");
+
     /// <summary>A pose every modern body shows whatever its soldier is doing, for a test range to photograph; empty for none.</summary>
     /// <remarks>
     /// idle, walk, aim, fire, aim_walk, run; hit_front, hit_back, hit_left, hit_right (once each time it is set); die_front,

@@ -57,7 +57,7 @@ internal sealed class Igi1Viewpoint(Igi1Gameplay gameplay) : IMissionViewpoint
     public bool IsInteractionViewActive => _interaction.IsActive;
 
     /// <inheritdoc/>
-    public bool ShowsViewModel => _thirdPerson.ShowsViewModel;
+    public bool ShowsViewModel => _thirdPerson.ShowsViewModel && gameplay.World.SoldierPresenter?.Simulation.Takedown is null;
 
     /// <inheritdoc/>
     public bool ShowsBody => _thirdPerson.ShowsBody;
@@ -104,7 +104,7 @@ internal sealed class Igi1Viewpoint(Igi1Gameplay gameplay) : IMissionViewpoint
     public bool HasPlayerHud => gameplay.World.Player is { View: not null, IsMountedStationaryGun: false };
 
     /// <inheritdoc/>
-    public bool HasFirstPersonHud => gameplay.World.Player is { IsOnLadder: false, IsInWorldInteraction: false };
+    public bool HasFirstPersonHud => gameplay.World.Player is { IsOnLadder: false, IsInWorldInteraction: false } && gameplay.World.SoldierPresenter?.Simulation.Takedown is null;
 
     /// <inheritdoc/>
     public SightZoomFrame? SightZoom(float tickBlend) => gameplay.World.Player?.SmoothedSightZoom(tickBlend);
@@ -113,7 +113,11 @@ internal sealed class Igi1Viewpoint(Igi1Gameplay gameplay) : IMissionViewpoint
     public float BinocularZoomIn(float tanX) => gameplay.World.Player?.BinocularZoomInFraction(tanX) ?? 0f;
 
     /// <inheritdoc/>
-    public InteractionPromptTarget? InteractionPrompt(float tickBlend) => gameplay.World.Player?.InteractionPrompt(tickBlend);
+    public InteractionPromptTarget? InteractionPrompt(float tickBlend) =>
+        gameplay.World.Player?.InteractionPrompt(tickBlend)
+        ?? (gameplay.World.SoldierPresenter?.Simulation.TakedownOffer is { } guard
+            ? new InteractionPromptTarget(-1, InteractionActivateType.None, "takedown", guard.Position + new Vector3d(0.0, 0.0, 1.5 * WorldScene.UnitsPerMetre), 0, false, false, null)
+            : null);
 
     /// <inheritdoc/>
     public Camera3D? WalkingEye(bool smooth, float tickBlend)
@@ -232,6 +236,21 @@ internal sealed class Igi1Viewpoint(Igi1Gameplay gameplay) : IMissionViewpoint
             && mission.Player is { HasViewTickPair: true, IsOnLadder: false, IsInWorldInteraction: false })
         {
             eye = mission.Player.SmoothedCamera(frame.TickBlend);
+        }
+
+        // A takedown has the view: the eye in the attacker's head, whatever else would have had it.
+        if (frame.PlayerMode && !mission.IsPlayerDead && mission.SoldierPresenter?.Simulation.Takedown?.Eye is { } takedownEye)
+        {
+            eye = takedownEye(frame.Smooth ? frame.TickBlend : 1f);
+            bodyEye = eye;
+            _thirdPerson.Reset();
+            _thirdPersonMilliseconds = frame.NowMilliseconds;
+            if (mission.Player is not null)
+            {
+                mission.Player.AimConvergenceRay = null;
+            }
+
+            return eye;
         }
 
         // The body's own eye, before the over-the-shoulder view moves the camera off it: the

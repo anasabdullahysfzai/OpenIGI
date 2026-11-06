@@ -139,6 +139,8 @@ internal sealed class ModernBodyAsset : IDisposable
             Array.Fill(parts, -1, offset / 3, count / 3);
         }
 
+        // Nor is the knife, hanging unseen from every hand, anything a round meets.
+        Array.Fill(parts, -1, Knife.IndexOffset / 3, Knife.IndexCount / 3);
         return parts;
     }
 
@@ -363,6 +365,15 @@ internal sealed class ModernBodyAsset : IDisposable
 
     /// <summary>Gets the stagger of a man blinded by a flashbang, played once (<c>flash_stagger</c>), or none where the file has none.</summary>
     public ModernClip FlashStagger { get; private set; } = ModernClip.None;
+
+    /// <summary>Gets the knife takedown's attacker's clip, which starts from the victim's origin; null where the character has none.</summary>
+    public ModernClip? TakedownAttacker { get; private set; }
+
+    /// <summary>Gets the knife takedown's victim's clip; null where the character has none.</summary>
+    public ModernClip? TakedownVictim { get; private set; }
+
+    /// <summary>Gets the knife's run of <see cref="Indices"/> and its colour texture (a material named <c>Knife_...</c>), drawn only on a body doing a takedown; none without one.</summary>
+    public (int IndexOffset, int IndexCount, TextureHandle Diffuse) Knife { get; private set; }
 
     /// <summary>Gets how many metres go to one of the run's units of root travel.</summary>
     public float RunMetresPerTravel => Run.Travel.Length() > 0f ? Run.MetresPerSecond * Run.Duration / Run.Travel.Length() : 1f;
@@ -630,6 +641,12 @@ internal sealed class ModernBodyAsset : IDisposable
         asset.ChestFrontRight = Fall("death_short_front_right");
         asset.LegDeaths = [Fall("death_short_leg_left"), Fall("death_short_leg_right")];
         asset.SideDeaths = [Fall("death_short_side_left"), Fall("death_short_side_right")];
+
+        ModernClip? Paired(string name) =>
+            model.LogicalAnimations.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase)) is { } clip
+                ? ModernClip.ReadPaired(clip, index, asset.Rest.Length, up)
+                : null;
+        (asset.TakedownAttacker, asset.TakedownVictim) = (Paired("takedown_attacker"), Paired("takedown_victim"));
 
         asset.KneelDeaths = [Fall("death_kneel_front"), Fall("death_kneel_back")];
         asset.KneelHeadDeath = Fall("death_kneel_head");
@@ -969,6 +986,12 @@ internal sealed class ModernBodyAsset : IDisposable
                 }
             }
 
+            if (primitive.Material?.Name?.StartsWith("Knife_", StringComparison.Ordinal) ?? false)
+            {
+                Knife = (offset, indices.Count - offset, diffuse);
+                continue;
+            }
+
             bool gun = primitive.Material?.Name?.StartsWith("Rifle_", StringComparison.Ordinal) ?? false;
             subsets.Add((offset, indices.Count - offset, diffuse, gun));
         }
@@ -977,7 +1000,8 @@ internal sealed class ModernBodyAsset : IDisposable
         Weights = [.. skin];
         Indices = [.. indices];
         Subsets = [.. subsets];
-        GunVertices = [.. Subsets.Where(s => s.Gun).SelectMany(s => Indices.Skip(s.IndexOffset).Take(s.IndexCount)).Select(i => (int)i).Distinct()];
+        GunVertices = [.. Subsets.Where(s => s.Gun).Select(s => (s.IndexOffset, s.IndexCount)).Append((Knife.IndexOffset, Knife.IndexCount))
+            .SelectMany(s => Indices.Skip(s.Item1).Take(s.Item2)).Select(i => (int)i).Distinct()];
         GunEnds = FindGunEnds();
         LowestY = Vertices.Min(v => v.Position.Y);
     }
@@ -1085,6 +1109,7 @@ internal sealed class ModernClip
     private Vector3 _travel;
     private Vector3 _up;
     private bool _falls;
+    private bool _keepsRoot;
 
     /// <summary>Gets or sets a value indicating whether the clip is played over everything but the arms, which keep the rifle.</summary>
     public bool Layered { get; set; }
@@ -1265,6 +1290,19 @@ internal sealed class ModernClip
         return clip;
     }
 
+    /// <summary>Reads one clip of a pair that share a world: played once and held, with its root's slide along the ground left in.</summary>
+    /// <param name="animation">The glTF animation.</param>
+    /// <param name="index">Each node's index in the asset.</param>
+    /// <param name="nodes">How many nodes the asset has.</param>
+    /// <param name="up">Up, in the root's parent's frame.</param>
+    /// <returns>The clip.</returns>
+    public static ModernClip ReadPaired(GltfAnimation animation, Dictionary<Node, int> index, int nodes, Vector3 up)
+    {
+        ModernClip clip = ReadFall(animation, index, nodes, up);
+        clip._keepsRoot = true;
+        return clip;
+    }
+
     /// <summary>Gets a node's local transform at a time, the clip wrapping round, or its rest for what the clip does not move.</summary>
     /// <param name="node">The node.</param>
     /// <param name="time">The time, in seconds.</param>
@@ -1293,6 +1331,11 @@ internal sealed class ModernClip
     /// <returns>The travel so far.</returns>
     public Vector3 TravelAt(float time)
     {
+        if (_keepsRoot)
+        {
+            return Vector3.Zero;
+        }
+
         if (!_falls)
         {
             return _travel * (Wrap(time) / Duration);

@@ -5,8 +5,10 @@ using OpenIGI.Engine.Resources;
 using OpenIGI.Engine.Tasks;
 using OpenIGI.Engine.Time;
 using OpenIGI.Engine.Vfs;
+using OpenIGI.Core.Numerics;
 using OpenIGI.Formats.Ai;
 using OpenIGI.Game;
+using OpenIGI.Game.Igi1.Ai;
 using OpenIGI.Game.Player;
 using OpenIGI.Game.World;
 using OpenIGI.Presentation.Igi1;
@@ -79,6 +81,88 @@ public sealed class ModernBodyMissionTests(Xunit.Abstractions.ITestOutputHelper 
             output.WriteLine($"root now {shot.Agent.View.RootSample.Z:0} units, clip {shot.Agent.View.CurrentAnimation}, time {shot.Agent.View.Bones.SourceOf(0)?.Time}, drawn at {shot.TickWhere.Z:0.00} m");
             output.WriteLine($"floor {floor:0.00} m, corpse's lowest {corpseLowest:0.00} m");
             Assert.True(Math.Abs(corpseLowest - floor) < 0.03, $"the corpse's lowest point is {corpseLowest - floor:0.00} m off the floor");
+        }
+        finally
+        {
+            GameplayCVars.ModernBodies.Value = on;
+            GameplayCVars.ModernBodyFile.Value = file;
+        }
+    }
+
+    [Theory]
+    [InlineData(null, 0.0, true)]              // Open and level.
+    [InlineData(1.5, 0.0, false)]              // A wall in the way, ahead of him.
+    [InlineData(-0.8, 0.0, false)]             // A wall behind him, where the attacker starts.
+    [InlineData(null, 0.5, false)]             // A step down ahead of him.
+    [InlineData(null, 0.2, true)]              // A slight rise is nothing.
+    public void ATakedownNeedsRoomAndLevelGround(double? wallAhead, double step, bool fits)
+    {
+        const double M = WorldScene.UnitsPerMetre;
+        Vector3d at = new(100.0 * M, 200.0 * M, 10.0 * M);
+
+        // He faces +Y (facing 0). A wall across the way at so many metres along Y from him, and the ground changing beyond one metre ahead.
+        bool Walls(Vector3d from, Vector3d to, out WorldRayHit hit)
+        {
+            hit = default;
+            return wallAhead is { } wall && (from.Y - at.Y - (wall * M)) * (to.Y - at.Y - (wall * M)) <= 0.0;
+        }
+
+        double? Ground(double x, double y, double from) => (y - at.Y > M ? -step : 0.0) * M + at.Z;
+        Assert.Equal(fits, TakedownRoom.Fits(at, 0f, Walls, Ground));
+    }
+
+    [RequiresGameDataFact]
+    public void ATakedownPlaysThePairFromTheVictimsOriginAndEndsCleanly()
+    {
+        if (!File.Exists(ModernBodyTests.File))
+        {
+            return;
+        }
+
+        (bool on, string file) = (GameplayCVars.ModernBodies.Value, GameplayCVars.ModernBodyFile.Value);
+        GameplayCVars.ModernBodies.Value = true;
+        GameplayCVars.ModernBodyFile.Value = ModernBodyTests.File;
+        try
+        {
+            RecordingGraphicsDevice device = new();
+            using SoldierRenderer renderer = Load(device, 1);
+            for (int tick = 0; tick < 10; tick++)
+            {
+                renderer.Tick();
+            }
+
+            SoldierMember victim = renderer.MembersForTesting.Select(m => m.Member).First(m => m.Modern is not null);
+            TakedownRun run = new(victim.Agent.View, Camera3D.Default);
+            renderer.Simulation.Takedown = run;
+            for (run.Tick = 1; run.Tick <= 20; run.Tick++)
+            {
+                renderer.Tick();
+            }
+
+            run.Tick = 20;
+            ModernBody? attacker = victim.TakedownPartner;
+            Assert.NotNull(attacker);
+            Assert.True(attacker!.ShowsKnife);
+            Assert.True(victim.Modern!.Fallen);
+            Assert.NotNull(run.End);
+
+            // The eye is the attacker's, behind the victim and at a man's height: the clip's root offset was kept, not taken out as a fall's slide.
+            Vector3d eye = run.Eye!(1f).Position - victim.DrawnWhere;
+            double behind = Math.Sqrt((eye.X * eye.X) + (eye.Y * eye.Y));
+
+            // He is drawn from his root, its height above his feet in his root sample.
+            double aboveFeet = eye.Z + (victim.Agent.View.RootSample.Z / WorldScene.UnitsPerMetre);
+            output.WriteLine(FormattableString.Invariant($"eye {behind:0.00} m from him, {aboveFeet:0.00} m above his feet"));
+            Assert.InRange(behind, 0.4, 0.9);
+            Assert.InRange(aboveFeet, 1.4, 1.9);
+
+            renderer.Simulation.Takedown = null;
+            renderer.Tick();
+
+            // Ended with him still alive (the player was shot dead): the attacker goes, and he is himself again, standing.
+            Assert.Null(victim.TakedownPartner);
+            Assert.False(victim.TakenDown);
+            Assert.False(victim.Modern is { Fallen: true });
         }
         finally
         {

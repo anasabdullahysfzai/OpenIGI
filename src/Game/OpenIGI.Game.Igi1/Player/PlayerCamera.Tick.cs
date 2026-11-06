@@ -15,6 +15,29 @@ namespace OpenIGI.Game.Igi1.Player;
 
 public sealed partial class PlayerCamera
 {
+    /// <summary>Gets or sets a value indicating whether something else has the body for now: it takes no input and does not move (a takedown).</summary>
+    public bool IsHeld { get; set; }
+
+    /// <summary>Gets a value indicating whether the use key went down since the last tick the body took input.</summary>
+    /// <param name="frame">The tick's input frame.</param>
+    /// <returns>Whether it went down.</returns>
+    public bool UseWentDown(in PlayerInputFrame frame) => frame[(int)PlayerInputSlot.Activate] != 0f && !_useWasDown;
+
+    private bool _useWasDown;
+
+    /// <summary>Stands the body exactly where it is told, on the floor of whoever it stands beside, with no search for ground: the live walls may not hold a building's floor.</summary>
+    /// <param name="feet">Where its feet go, in world units.</param>
+    /// <param name="gamma">Its facing, as a spawn's.</param>
+    /// <param name="pitch">How far above level it looks, in radians.</param>
+    public void StandAt(Vector3d feet, float gamma, float pitch = 0f)
+    {
+        _firstPerson.Pair.HasPair = false;
+        _firstPerson.ResetKicks();
+        _body.Position = feet;
+        _body.Yaw = -gamma;
+        _body.Pitch = pitch;
+    }
+
     /// <summary>Advances the body by one simulation tick.</summary>
     /// <param name="input">The window's input.</param>
     /// <param name="terrain">The level's terrain.</param>
@@ -57,6 +80,12 @@ public sealed partial class PlayerCamera
         FramePitch = _body.Pitch;
         FrameAim = _shots.AimConvergenceRay is { } aim ? (aim.OriginUnits - _body.Eye, aim.Direction) : null;
         _input.Accept(frame);
+        _useWasDown = frame[(int)PlayerInputSlot.Activate] != 0f;
+        if (IsHeld)
+        {
+            return;
+        }
+
         _locomotion.TakeToggle(_input);
         _interactions?.Tick();
 

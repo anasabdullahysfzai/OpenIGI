@@ -51,10 +51,24 @@ public sealed partial class SoldierRenderer
             return;
         }
 
+        // A takedown over, the attacker's body goes (the player has his own again); under way, the pair has him.
+        if (member.TakedownPartner is { } finished && !ReferenceEquals(_sim.Takedown?.Victim, view))
+        {
+            finished.Dispose();
+            member.TakedownPartner = null;
+        }
+
+        if (_sim.Takedown is { } takedown && ReferenceEquals(takedown.Victim, view) && asset.TakedownAttacker is not null && asset.TakedownVictim is not null)
+        {
+            TickTakedown(group, member, asset, view, takedown);
+            return;
+        }
+
         string forced = GameplayCVars.ModernPose.Value;
         if (!view.IsDead && member.Modern is { Fallen: true } && !forced.StartsWith("die", StringComparison.Ordinal))
         {
             DropModernBody(member);
+            member.TakenDown = false;
         }
 
         if (member.Modern is null)
@@ -67,7 +81,7 @@ public sealed partial class SoldierRenderer
         }
 
         ModernBody body = member.Modern;
-        if (view.IsDead && GameplayCVars.ModernRagdoll.Value && TickModernCorpse(member, body, asset, view))
+        if (view.IsDead && GameplayCVars.ModernRagdoll.Value && !member.TakenDown && TickModernCorpse(member, body, asset, view))
         {
             return;
         }
@@ -499,6 +513,8 @@ public sealed partial class SoldierRenderer
     {
         member.Modern?.Dispose();
         member.Modern = null;
+        member.TakedownPartner?.Dispose();
+        member.TakedownPartner = null;
         member.ModernCorpse = null;
         member.ModernFall = null;
     }

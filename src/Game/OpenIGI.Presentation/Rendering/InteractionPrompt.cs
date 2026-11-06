@@ -91,6 +91,7 @@ public static class InteractionPromptPresentation
             "weapon.spr" => "Take Weapon",
             "note.spr" => "Read Note",
             "anya.spr" => "Talk",
+            "takedown" => "Takedown",
             _ => TitleForType(target.Type),
         };
     }

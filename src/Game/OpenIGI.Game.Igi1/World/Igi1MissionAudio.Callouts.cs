@@ -38,6 +38,33 @@ public sealed partial class Igi1MissionAudio
         return true;
     }
 
+    /// <summary>Plays one sound of a knife takedown: takedown_{cue}.wav from the callouts' folder where there is one, else one of the game's own.</summary>
+    /// <param name="cue">Which: grab, struggle, stab, out, gasp or fall.</param>
+    /// <param name="fallback">The game's sound.</param>
+    /// <param name="position">Where, in world units.</param>
+    public void PlayTakedownCue(string cue, string fallback, Vector3d position)
+    {
+        if (host.SoundOutput is not { } sounds)
+        {
+            return;
+        }
+
+        string name = "takedown_" + cue;
+        string path = Path.Combine(GameplayCVars.CalloutDirectory.Value, name + ".wav");
+        if (File.Exists(path))
+        {
+            if (_calloutsTried.Add(name) && ReadWave(File.ReadAllBytes(path)) is var (format, pcm))
+            {
+                sounds.RegisterExternal(name, format, pcm);
+            }
+
+            sounds.PlayExternal(name, position, gain: 1f, ScriptSoundPriority, maximumDistanceInMetres: CalloutReachMetres);
+            return;
+        }
+
+        sounds.PlayDefinition(fallback, position, priority: ScriptSoundPriority);
+    }
+
     /// <summary>Reads a plain PCM WAV.</summary>
     /// <param name="file">The whole file.</param>
     /// <returns>Its format and samples; null for anything else.</returns>

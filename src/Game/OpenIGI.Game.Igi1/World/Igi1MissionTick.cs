@@ -328,6 +328,7 @@ public sealed partial class Igi1MissionTick(MissionWorld mission, Igi1PlayerHarm
         }
 
         ISoldierPresenter? soldiers = mission.SoldierPresenter;
+        EndTakedownIfPlayerDied();
         if (mission.SoldiersInWalk)
         {
             // The soldiers updated inside the level walk; this closes their tick (corpses, skinning).
@@ -476,6 +477,7 @@ public sealed partial class Igi1MissionTick(MissionWorld mission, Igi1PlayerHarm
         else
         {
             AimBot(player);
+            TickTakedown(player);
             player.Tick(host.ViewInput, host.Ground);
 
             // PlayerCamera advances its interaction registry before it resolves this tick's activate target.
